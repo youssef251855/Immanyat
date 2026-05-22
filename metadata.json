@@ -1,0 +1,6 @@
+{
+  "name": "إيمانيات",
+  "description": "منصة إسلامية متكاملة تساعد المستخدم على الالتزام بالعبادات والأذكار والقرآن بطريقة تفاعلية وتحفيزية باستخدام الذكاء الاصطناعي",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
