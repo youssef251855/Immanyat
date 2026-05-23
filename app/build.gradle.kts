@@ -11,7 +11,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.example"
+    applicationId = "com.immanyat.com"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
@@ -101,6 +101,7 @@ dependencies {
   implementation(libs.play.services.location)
   implementation(libs.adhan)
   implementation(libs.retrofit)
+  implementation(libs.androidx.media3.exoplayer)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

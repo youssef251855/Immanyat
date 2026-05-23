@@ -4,10 +4,14 @@ import android.annotation.SuppressLint
 import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.MediaPlayer
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -19,7 +23,7 @@ import java.io.File
 
 class AdhanPlayerService : Service() {
 
-    private var mediaPlayer: MediaPlayer? = null
+    private var exoPlayer: ExoPlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var vibrator: Vibrator? = null
     private var progressiveVolumeJob: Job? = null
@@ -139,9 +143,9 @@ class AdhanPlayerService : Service() {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         
         // Setup focus attributes
-        val playbackAttrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        val playbackAttrs = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -151,7 +155,7 @@ class AdhanPlayerService : Service() {
                 .setOnAudioFocusChangeListener { focusChange ->
                     if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                         currentVolume = 0f
-                        mediaPlayer?.setVolume(0f, 0f)
+                        exoPlayer?.volume = 0f
                     }
                 }
                 .build()
@@ -178,59 +182,61 @@ class AdhanPlayerService : Service() {
         val useLocal = AdhanManager.isAthanDownloaded(this, muadhin)
         val streamUrl = AdhanManager.MUADHIN_URLS[muadhin] ?: AdhanManager.MUADHIN_URLS.values.first()
 
-        try {
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                val exo = ExoPlayer.Builder(this@AdhanPlayerService).build().apply {
+                    val attrs = AudioAttributes.Builder()
+                        .setUsage(C.USAGE_ALARM)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
                         .build()
-                )
-                
-                if (useLocal) {
-                    setDataSource(file.absolutePath)
-                    Log.d("AdhanPlayerService", "Playing offline adhan from file: ${file.absolutePath}")
-                } else {
-                    setDataSource(streamUrl)
-                    Log.d("AdhanPlayerService", "Streaming online adhan from URL: $streamUrl")
-                }
-
-                setVolume(currentVolume, currentVolume)
-                
-                setOnPreparedListener { mp ->
-                    mp.start()
-                    startVibrationIfConfigured()
-                    startProgressiveVolumeRise()
-                }
-
-                setOnCompletionListener {
-                    Log.d("AdhanPlayerService", "Athan play completed")
-                    stopSelf()
-                }
-
-                setOnErrorListener { _, what, extra ->
-                    Log.e("AdhanPlayerService", "MediaPlayer error: what=$what normal-extra=$extra")
-                    // If streaming failed and was offline, fallback to play a simple built-in alarm or terminate
-                    if (!useLocal) {
-                        // Play emergency backup chime or exit
-                        Log.d("AdhanPlayerService", "Fallback stream error, terminating service.")
+                    setAudioAttributes(attrs, false)
+                    
+                    val uri = if (useLocal) file.absolutePath else streamUrl
+                    setMediaItem(MediaItem.fromUri(uri))
+                    
+                    if (useLocal) {
+                        Log.d("AdhanPlayerService", "Playing offline adhan from file: $uri")
+                    } else {
+                        Log.d("AdhanPlayerService", "Streaming online adhan from URL: $uri")
                     }
-                    stopSelf()
-                    true
+                    
+                    volume = currentVolume
+                    prepare()
+                    
+                    addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_READY) {
+                                play()
+                                startVibrationIfConfigured()
+                                startProgressiveVolumeRise()
+                            } else if (state == Player.STATE_ENDED) {
+                                Log.d("AdhanPlayerService", "Athan play completed")
+                                stopSelf()
+                            }
+                        }
+                        
+                        override fun onPlayerError(error: PlaybackException) {
+                            Log.e("AdhanPlayerService", "ExoPlayer error", error)
+                            if (!useLocal) {
+                                Log.d("AdhanPlayerService", "Fallback stream error, terminating service.")
+                            }
+                            stopSelf()
+                        }
+                    })
                 }
 
-                prepareAsync()
+                exoPlayer = exo
+            } catch (e: Exception) {
+                Log.e("AdhanPlayerService", "Error setting up ExoPlayer", e)
+                stopSelf()
             }
-        } catch (e: Exception) {
-            Log.e("AdhanPlayerService", "Error setting up MediaPlayer", e)
-            stopSelf()
         }
     }
 
     private fun startProgressiveVolumeRise() {
         if (!AdhanManager.isGradualVolume(this)) {
             val maxVol = AdhanManager.getAthanVolume(this)
-            mediaPlayer?.setVolume(maxVol, maxVol)
+            exoPlayer?.volume = maxVol
             return
         }
 
@@ -242,10 +248,10 @@ class AdhanPlayerService : Service() {
 
             for (i in 1..stepCount) {
                 delay(delayDuration)
-                if (mediaPlayer == null || !mediaPlayer!!.isPlaying) break
+                if (exoPlayer == null || !exoPlayer!!.isPlaying) break
                 currentVolume += stepSize
                 if (currentVolume > maxVolume) currentVolume = maxVolume
-                mediaPlayer?.setVolume(currentVolume, currentVolume)
+                exoPlayer?.volume = currentVolume
             }
         }
     }
@@ -277,13 +283,13 @@ class AdhanPlayerService : Service() {
         serviceScope.cancel()
 
         // Release MediaPlayer
-        mediaPlayer?.let {
+        exoPlayer?.let {
             if (it.isPlaying) {
                 it.stop()
             }
             it.release()
         }
-        mediaPlayer = null
+        exoPlayer = null
 
         // Stop vibrator
         vibrator?.cancel()

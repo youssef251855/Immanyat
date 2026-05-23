@@ -10,6 +10,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Geocoder
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +52,8 @@ import com.example.ui.viewmodel.EmaniatViewModel
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.*
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -75,7 +78,14 @@ fun AdhanSettingsScreen(
     }
 
     // GPS location fetcher callback
-    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    val locContext = remember(context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.createAttributionContext("Location")
+        } else {
+            context
+        }
+    }
+    val fusedLocationClient = remember(locContext) { LocationServices.getFusedLocationProviderClient(locContext) }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -95,13 +105,19 @@ fun AdhanSettingsScreen(
                                             city = addresses[0].locality ?: addresses[0].adminArea ?: "موقعي الحالي"
                                             AdhanManager.saveCoordinates(context, loc.latitude, loc.longitude, city)
                                             locationName = city
-                                            prayerTimesList = AdhanManager.calculatePrayerTimesForDate(context, Date())
-                                            AdhanManager.scheduleNextAlarm(context)
+                                            
+                                            // Ensure calculating times and scheduling runs in UI or background appropriately
+                                            scope.launch(Dispatchers.Main) {
+                                                prayerTimesList = AdhanManager.calculatePrayerTimesForDate(context, Date())
+                                                AdhanManager.scheduleNextAlarm(context)
+                                            }
                                         }
                                     }
                                 } else {
                                     @Suppress("DEPRECATION")
-                                    val list = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+                                    val list = withContext(Dispatchers.IO) {
+                                        geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+                                    }
                                     if (!list.isNullOrEmpty()) {
                                         city = list[0].locality ?: list[0].adminArea ?: "موقعي الحالي"
                                     }
@@ -618,35 +634,46 @@ fun CompassAndMosquesTab(
             private var lastMagnetometer = FloatArray(3)
             private var accelSet = false
             private var magnetSet = false
+            private var lastAzimuth = 0f
 
             override fun onSensorChanged(event: SensorEvent?) {
                 if (event == null) return
-                
-                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
-                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                    SensorManager.getOrientation(rotationMatrix, orientationValues)
-                    var azimuthRad = orientationValues[0]
-                    var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
-                    azimuthDeg = (azimuthDeg + 360f) % 360f
-                    deviceAzimuth = azimuthDeg
-                } else {
-                    if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                        val length = minOf(event.values.size, lastAccelerometer.size)
-                        System.arraycopy(event.values, 0, lastAccelerometer, 0, length)
-                        accelSet = true
-                    } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
-                        val length = minOf(event.values.size, lastMagnetometer.size)
-                        System.arraycopy(event.values, 0, lastMagnetometer, 0, length)
-                        magnetSet = true
-                    }
-                    if (accelSet && magnetSet) {
-                        SensorManager.getRotationMatrix(rotationMatrix, null, lastAccelerometer, lastMagnetometer)
+                try {
+                    if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                         SensorManager.getOrientation(rotationMatrix, orientationValues)
                         var azimuthRad = orientationValues[0]
                         var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
                         azimuthDeg = (azimuthDeg + 360f) % 360f
-                        deviceAzimuth = azimuthDeg
+                        // Throttle state changes to prevent input dispatcher and main thread blockage
+                        if (Math.abs(azimuthDeg - lastAzimuth) > 2.0f) {
+                            lastAzimuth = azimuthDeg
+                            deviceAzimuth = azimuthDeg
+                        }
+                    } else {
+                        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                            val length = minOf(event.values.size, lastAccelerometer.size)
+                            System.arraycopy(event.values, 0, lastAccelerometer, 0, length)
+                            accelSet = true
+                        } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                            val length = minOf(event.values.size, lastMagnetometer.size)
+                            System.arraycopy(event.values, 0, lastMagnetometer, 0, length)
+                            magnetSet = true
+                        }
+                        if (accelSet && magnetSet) {
+                            SensorManager.getRotationMatrix(rotationMatrix, null, lastAccelerometer, lastMagnetometer)
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var azimuthRad = orientationValues[0]
+                            var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+                            azimuthDeg = (azimuthDeg + 360f) % 360f
+                            if (Math.abs(azimuthDeg - lastAzimuth) > 2.5f) {
+                                lastAzimuth = azimuthDeg
+                                deviceAzimuth = azimuthDeg
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.e("AdhanSettingsScreen", "Error calculation compass rotation", e)
                 }
             }
 
@@ -654,13 +681,13 @@ fun CompassAndMosquesTab(
         }
 
         if (rotationSensor != null) {
-            sensorManager.registerListener(sensorEventListener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager.registerListener(sensorEventListener, rotationSensor, SensorManager.SENSOR_DELAY_NORMAL)
         } else {
             if (accelSensor != null) {
-                sensorManager.registerListener(sensorEventListener, accelSensor, SensorManager.SENSOR_DELAY_UI)
+                sensorManager.registerListener(sensorEventListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
             }
             if (magnetSensor != null) {
-                sensorManager.registerListener(sensorEventListener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
+                sensorManager.registerListener(sensorEventListener, magnetSensor, SensorManager.SENSOR_DELAY_NORMAL)
             }
         }
 

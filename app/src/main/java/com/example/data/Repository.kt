@@ -1,9 +1,11 @@
 package com.example.data
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -99,12 +101,16 @@ class EmaniatRepository(private val db: AppDatabase) {
                 if (lastDate.isNotEmpty()) {
                     val last = format.parse(lastDate)
                     val today = format.parse(todayStr)
-                    val diff = today.time - last.time
-                    val diffDays = diff / (24 * 60 * 60 * 1000)
-                    if (diffDays == 1L) {
-                        streakValue += 1
-                    } else if (diffDays > 1L) {
-                        streakValue = 1 // broke streak
+                    if (last != null && today != null) {
+                        val diff = today.time - last.time
+                        val diffDays = diff / (24 * 60 * 60 * 1000)
+                        if (diffDays == 1L) {
+                            streakValue += 1
+                        } else if (diffDays > 1L) {
+                            streakValue = 1 // broke streak
+                        }
+                    } else {
+                        streakValue = 1
                     }
                 } else {
                     streakValue = 1 // first day
@@ -131,7 +137,7 @@ class EmaniatRepository(private val db: AppDatabase) {
         )
     }
 
-    suspend fun initializeDefaultDataIfRequired() {
+    suspend fun initializeDefaultDataIfRequired() = withContext(Dispatchers.IO) {
         // Initialize Challenges
         val currentChallenges = db.challengeDao().getAllChallenges().first()
         if (currentChallenges.isEmpty()) {

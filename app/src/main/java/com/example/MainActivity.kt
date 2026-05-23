@@ -33,6 +33,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.screens.*
@@ -45,8 +48,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Immediate schedule of the background Adhan Alarm
-        com.example.data.AdhanManager.scheduleNextAlarm(this)
+        // Immediate schedule of the background Adhan Alarm in background thread
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.example.data.AdhanManager.scheduleNextAlarm(this@MainActivity)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         
         enableEdgeToEdge()
         setContent {
@@ -70,10 +79,16 @@ fun EmaniatApp(
     // Tab selects inside Profile tab (Profile Stats, Challenges, Badges)
     var profileSubTab by remember { mutableStateOf(0) } // 0: Stats, 1: Challenges, 2: Journey
 
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
+    if (!viewModel.isUserLoggedIn) {
+        LoginScreen(
+            viewModel = viewModel,
+            onLoginSuccess = {}
+        )
+    } else {
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
         topBar = {
             Column(
                 modifier = Modifier
@@ -159,108 +174,6 @@ fun EmaniatApp(
                     .background(Color.Transparent)
                     .navigationBarsPadding()
             ) {
-                // FLOATING PLAYBACK RECITER BAR IF ACTIVE
-                AnimatedVisibility(
-                    visible = playingState.isPlaying,
-                    enter = slideInVertically { h -> h } + fadeIn(),
-                    exit = slideOutVertically { h -> h } + fadeOut()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .shadow(8.dp, RoundedCornerShape(16.dp))
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(SurfaceDarkGlass)
-                            .border(1.dp, GoldAccent.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(EmeraldPrimary.copy(alpha = 0.3f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MusicNote,
-                                        contentDescription = "تلاوة",
-                                        tint = GoldAccent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                
-                                Spacer(modifier = Modifier.width(10.dp))
-                                
-                                Column {
-                                    Text(
-                                        text = "تلاوة سورة ${playingState.surahName}",
-                                        color = LightWhite,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "المقرئ: ${playingState.reader}",
-                                        color = TextColorSecondary,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-
-                            // Media actions row
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                // Mute toggle
-                                IconButton(onClick = { viewModel.toggleMute() }) {
-                                    Icon(
-                                        imageVector = if (playingState.isMuted) Icons.Default.VolumeOff
-                                        else Icons.Default.VolumeUp,
-                                        contentDescription = "كتم الصوت",
-                                        tint = GoldAccent,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                // Play/pause toggle
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(EmeraldSecondary)
-                                        .clickable { viewModel.togglePlayback() },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (playingState.isPlaying) Icons.Default.Pause
-                                        else Icons.Default.PlayArrow,
-                                        contentDescription = "تشغيل كتم",
-                                        tint = LightWhite,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-
-                                // Stop closing player button
-                                IconButton(onClick = { viewModel.playRecitation("", -1) }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "إغلاق التلاوة",
-                                        tint = MutedRed,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // BOTTOM NAVIGATION BAR TABS
                 Box(
                     modifier = Modifier
@@ -434,6 +347,7 @@ fun EmaniatApp(
             }
         }
     }
+}
 }
 
 private fun Modifier.fillOuterSubTabRowModifier(): Modifier = this

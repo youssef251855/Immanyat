@@ -40,6 +40,20 @@ data class Surah(
     val type: String // مكية / مدنية
 )
 
+// Helper to convert indices to beautiful Arabic numeral string
+fun getArabicNumber(number: Int): String {
+    val arabicDigits = charArrayOf('٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩')
+    val builder = StringBuilder()
+    var n = number
+    if (n == 0) return "٠"
+    while (n > 0) {
+        val digit = n % 10
+        builder.append(arabicDigits[digit])
+        n /= 10
+    }
+    return builder.reverse().toString()
+}
+
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun QuranScreen(
@@ -47,12 +61,14 @@ fun QuranScreen(
     modifier: Modifier = Modifier
 ) {
     val currentBookmark by viewModel.currentBookmark.collectAsState()
-    val playingState = viewModel.playbackState
     val context = LocalContext.current
 
     var searchInput by remember { mutableStateOf("") }
     var selectedSurahForReading by remember { mutableStateOf<Surah?>(null) }
     
+    // Dynamic text size font factor
+    var textSizeFactor by remember { mutableStateOf(22f) }
+
     // Verses fetching state
     var activeSurahVerses by remember { mutableStateOf<List<String>?>(null) }
     var isLoadingVerses by remember { mutableStateOf(false) }
@@ -162,7 +178,7 @@ fun QuranScreen(
             Surah(99, "الزلزلة", "Az-Zalzalah", 8, "مدنية"),
             Surah(100, "العاديات", "Al-Adiyat", 11, "مكية"),
             Surah(101, "القارعة", "Al-Qari'ah", 11, "مكية"),
-            Surah(102, "التكاثر", "At-Takathur", 8, "مكية"),
+            Surah(102, "التكاثر", "At-Takatur", 8, "مكية"),
             Surah(103, "العصر", "Al-Asr", 3, "مكية"),
             Surah(104, "الهمزة", "Al-Humazah", 9, "مكية"),
             Surah(105, "الفيل", "Al-Fil", 5, "مكية"),
@@ -189,50 +205,50 @@ fun QuranScreen(
     val mockVerses = remember {
         mapOf(
             1 to listOf(
-                "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ (1)",
-                "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ (2)",
-                "الرَّحْمَنِ الرَّحِيمِ (3)",
-                "مَالِكِ يَوْمِ الدِّينِ (4)",
-                "إِيَّاكُ نَعْبُدُ وَإِيَّاكُ نَسْتَعِينُ (5)",
-                "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ (6)",
-                "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ (7)"
+                "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
+                "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ",
+                "الرَّحْمَنِ الرَّحِيمِ",
+                "مَالِكِ يَوْمِ الدِّينِ",
+                "إِيَّاكُ نَعْبُدُ وَإِيَّاكُ نَسْتَعِينُ",
+                "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ",
+                "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"
             ),
             18 to listOf(
-                "الْحَمْدُ لِلَّهِ الَّذِي أَنْزَلَ عَلَى عَبْدِهِ الْكِتَابَ وَلَمْ يَجْعَلْ لَهُ عِوَجًا (1)",
-                "قَيِّمًا لِيُنْذِرَ بَأْسًا شَدِيدًا مِنْ لَدُنْهُ وَيُبَشِّرَ الْمُؤْمِنِينَ الَّذِينَ يَعْمَلُونَ الصَّالِحَاتِ أَنَّ لَهُمْ أَجْرًا حَسَنًا (2)",
-                "مَاكِثِينَ فِيهِ أَبَدًا (3)",
-                "وَيُنْذِرَ الَّذِينَ قَالُوا اتَّخَذَ اللَّهُ وَلَدًا (4)",
-                "مَا لَهُمْ بِهِ مِنْ عِلْمٍ وَلَا لِآبَائِهِمْ كَبُرَتْ كَلِمَةً تَخْرُجُ مِنْ أَفْوَاهِهِمْ إِنْ يَقُولُونَ إِلَّا كَذِبًا (5)"
+                "الْحَمْدُ لِلَّهِ الَّذِي أَنْزَلَ عَلَى عَبْدِهِ الْكِتَابَ وَلَمْ يَجْعَلْ لَهُ عِوَجًا",
+                "قَيِّمًا لِيُنْذِرَ بَأْسًا شَدِيدًا مِنْ لَدُنْهُ وَيُبَشِّرَ الْمُؤْمِنِينَ الَّذِينَ يَعْمَلُونَ الصَّالِحَاتِ أَنَّ لَهُمْ أَجْرًا حَسَنًا",
+                "مَاكِثِينَ فِيهِ أَبَدًا",
+                "وَيُنْذِرَ الَّذِينَ قَالُوا اتَّخَذَ اللَّهُ وَلَدًا",
+                "مَا لَهُمْ بِهِ مِنْ عِلْمٍ وَلَا لِآبَائِهِمْ كَبُرَتْ كَلِمَةً تَخْرُجُ مِنْ أَفْوَاهِمْ إِنْ يَقُولُونَ إِلَّا كَذِبًا"
             ),
             108 to listOf(
                 "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-                "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ (1)",
-                "فَصَلِّ لِرَبِّكَ وَانْحَرْ (2)",
-                "إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ (3)"
+                "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ",
+                "فَصَلِّ لِرَبِّكَ وَانْحَرْ",
+                "إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ"
             ),
             112 to listOf(
                 "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-                "قُلْ هُوَ اللَّهُ أَحَدٌ (1)",
-                "اللَّهُ الصَّمَدُ (2)",
-                "لَمْ يَلِدْ وَلَمْ يُولَدْ (3)",
-                "وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ (4)"
+                "قُل * هُوَ اللَّهُ أَحَدٌ",
+                "اللَّهُ الصَّمَدُ",
+                "لَمْ يَلِدْ وَلَمْ يُولَدْ",
+                "وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ"
             ),
             113 to listOf(
                 "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-                "قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ (1)",
-                "مِنْ شَرِّ مَا خَلَقَ (2)",
-                "وَمِنْ شَرِّ غَاسِقٍ إِذَا وَقَبَ (3)",
-                "وَمِنْ شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ (4)",
-                "وَمِنْ شَرِّ حَاسِدٍ إِذَا حَسَدَ (5)"
+                "قُل * أَعُوذُ بِرَبِّ الْفَلَقِ",
+                "مِنْ شَرِّ مَا خَلَقَ",
+                "وَمِنْ شَرِّ غَاسِقٍ إِذَا وَقَبَ",
+                "وَمِنْ شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ",
+                "وَمِنْ شَرِّ حَاسِدٍ إِذَا حَسَدَ"
             ),
             114 to listOf(
                 "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
-                "قُلْ أَعُوذُ بِرَبِّ النَّاسِ (1)",
-                "مَلِكِ النَّاسِ (2)",
-                "إِلَهِ النَّاسِ (3)",
-                "مِنْ شَرِّ الْوَسْوَاسِ الْخَنَّاسِ (4)",
-                "الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ (5)",
-                "مِنَ الْجِنَّةِ وَالنَّاسِ (6)"
+                "قُل * أَعُوذُ بِرَبِّ النَّاسِ",
+                "مَلِكِ النَّاسِ",
+                "إِلَهِ النَّاسِ",
+                "مِنْ شَرِّ الْوَسْوَاسِ الْخَنَّاسِ",
+                "الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ",
+                "مِنَ الْجِنَّةِ وَالنَّاسِ"
             )
         )
     }
@@ -285,13 +301,13 @@ fun QuranScreen(
 
             // HEADER SCREEN
             Text(
-                text = "القرآن الكريم كامل 📖",
+                text = "القرآن الكريم للقراءة 📖",
                 color = TextColorPrimary,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "قراءة وتدبر لجميع الـ ١١٤ سورة مع التلاوة الصوتية والختمة الذكية",
+                text = "قراءة وتدبر لجميع الـ ١١٤ سورة الكريمة مع تتبع الختمة وحفظ علامات المتابعة",
                 color = TextColorSecondary,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -365,13 +381,54 @@ fun QuranScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "سلسلة السورة ${activeSurah.id} • ${activeSurah.englishName} • ${activeSurah.totalAyat} آية • ${activeSurah.type}",
+                                    text = "الترتيب ${activeSurah.id} • آياتها ${activeSurah.totalAyat} • نزولها ${activeSurah.type}",
                                     color = TextColorSecondary,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
                                 IslamicOrnamentDivider(modifier = Modifier.fillMaxWidth().height(16.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // FONT SIZE ADJUSTMENT CONTROLLER (HIGHLY POLISHED UX)
+                        GlassCard(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "حجم الخط: ${textSizeFactor.toInt()}",
+                                    color = GoldAccent,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Slider(
+                                    value = textSizeFactor,
+                                    onValueChange = { textSizeFactor = it },
+                                    valueRange = 16f..38f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = GoldAccent,
+                                        activeTrackColor = GoldAccent,
+                                        inactiveTrackColor = CardBorder.copy(alpha = 0.4f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 12.dp)
+                                )
+                                Text(
+                                    text = "الخط",
+                                    color = LightWhite,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
 
@@ -388,7 +445,7 @@ fun QuranScreen(
                                 CircularProgressIndicator(color = GoldAccent)
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "جاري تحميل كلام الله المبارك من السحابة... ☁️",
+                                    text = "جاري تحميل الآيات الكريمة... ☁️",
                                     color = LightWhite,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -409,7 +466,7 @@ fun QuranScreen(
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Text(
-                                        text = "تلاوة غير متوفرة دون إنترنت 📡",
+                                        text = "تطلب هذه السورة اتصالاً بالإنترنت 📡",
                                         color = LightWhite,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
@@ -417,7 +474,7 @@ fun QuranScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "السور المسبقة التحميل هي: الفاتحة، الكهف، الكوثر، الإخلاص، الفلق، والناس.\nقم بالاتصال بالشبكة لقراءة سورة ${activeSurah.arabicName} بكامل آياتها.",
+                                        text = "السور المسبقة التثبيت للاستخدام بدون إنترنت هي: الفاتحة، الكهف، الكوثر، الإخلاص، الفلق، والناس.\nيرجى الاتصال بالشبكة لقراءة بقية السور بحجمها الكامل.",
                                         color = TextColorSecondary,
                                         fontSize = 12.sp,
                                         textAlign = TextAlign.Center,
@@ -451,72 +508,70 @@ fun QuranScreen(
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     versesList.forEachIndexed { idx, ayah ->
-                                        // Render single ayah
-                                        Text(
-                                            text = ayah,
-                                            color = TextColorPrimary,
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center,
-                                            lineHeight = 36.sp,
+                                        // Render single ayah with beautiful custom text configuration
+                                        val ayahNumber = idx + 1
+                                        val arabicBadge = getArabicNumber(ayahNumber)
+                                        
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 12.dp)
-                                        )
-                                        HorizontalDivider(color = CardBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                                .padding(vertical = 14.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Text(
+                                                text = ayah,
+                                                color = TextColorPrimary,
+                                                fontSize = textSizeFactor.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                textAlign = TextAlign.Center,
+                                                lineHeight = (textSizeFactor * 1.6f).sp,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                            
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            
+                                            // Ayah Number Badge
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(GoldAccent.copy(alpha = 0.1f), CircleShape)
+                                                    .border(1.dp, GoldAccent.copy(alpha = 0.4f), CircleShape)
+                                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "﴿ $arabicBadge ﴾",
+                                                    color = GoldAccent,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        HorizontalDivider(color = CardBorder.copy(alpha = 0.3f), thickness = 0.5.dp)
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
-                            // QUICK PLAY AUDIO Recitation CONTROL
-                            Box(
+                            // MARK AS COMPLETED IN SMART KHATMA TRACKER
+                            Button(
+                                onClick = {
+                                    viewModel.incrementKhatmaProgress()
+                                    viewModel.bookmarkQuran(activeSurah.arabicName, activeSurah.id, 1)
+                                    selectedSurahForReading = null
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(EmeraldMuted.copy(alpha = 0.15f))
-                                    .border(1.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
-                                    .clickable { viewModel.playRecitation(activeSurah.arabicName, activeSurah.id) }
-                                    .padding(16.dp)
+                                    .height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldSecondary),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.Center
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = if (playingState.surahIndex == activeSurah.id && playingState.isPlaying) Icons.Default.Pause
-                                            else Icons.Default.PlayArrow,
-                                            contentDescription = "تشغيل التلاوة",
-                                            tint = GoldAccent,
-                                            modifier = Modifier.size(36.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column {
-                                            Text(
-                                                text = "تشغيل التلاوة الصوتية",
-                                                color = LightWhite,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp
-                                            )
-                                            Text(
-                                                text = "بصوت القارئ مشاري العفاسي",
-                                                color = TextColorSecondary,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-
-                                    if (playingState.surahIndex == activeSurah.id && playingState.isPlaying) {
-                                        Text(
-                                            text = "جاري التشغيل...",
-                                            color = EmeraldSecondary,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = LightWhite)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("أتممت قراءة هذه السورة الكريمة بنجاح ✔️", color = LightWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 }
                             }
                         }
@@ -531,7 +586,7 @@ fun QuranScreen(
                         // KHATMAS TRACKER Progress Card
                         GlassCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "نظام ختمة القرآن الكريم كامل 🕋",
+                                text = "تتبع ختمة القرآن الكريم كامل 🕋",
                                 color = GoldAccent,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
@@ -543,13 +598,13 @@ fun QuranScreen(
                             ) {
                                 Column {
                                     Text(
-                                        text = "صفحات التلاوة المنجزة: ${viewModel.khatmaProgressPages} / ٦٠٤",
+                                        text = "الصفحات المنجزة: ${viewModel.khatmaProgressPages} / ٦٠٤",
                                         color = LightWhite,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "المتبقي للختمة: ${604 - viewModel.khatmaProgressPages} صفحة",
+                                        text = "المتبقي للختم: ${604 - viewModel.khatmaProgressPages} صفحة",
                                         color = TextColorSecondary,
                                         fontSize = 11.sp
                                     )
@@ -592,7 +647,7 @@ fun QuranScreen(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(2.dp))
-                                        Text("أكملت قراءة صفحة", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("سجلت قراءة صفحة", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
 
@@ -608,7 +663,7 @@ fun QuranScreen(
                                         modifier = Modifier.weight(1.0f).height(38.dp),
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
-                                        Text("آخر حِفْظ: ${b.surahName} 🔖", fontSize = 11.sp, color = GoldAccent, fontWeight = FontWeight.Bold)
+                                        Text("علامتي: ${b.surahName} 🔖", fontSize = 11.sp, color = GoldAccent, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -661,7 +716,6 @@ fun QuranScreen(
                         ) {
                             items(filteredSurahs) { surah ->
                                 val isBookmarked = currentBookmark?.surahNumber == surah.id
-                                val isPlaying = playingState.isPlaying && playingState.surahIndex == surah.id
 
                                 Box(
                                     modifier = Modifier
@@ -683,7 +737,10 @@ fun QuranScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         // Left index and names
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
                                             // Index ornamental item
                                             Box(
                                                 modifier = Modifier
@@ -720,24 +777,28 @@ fun QuranScreen(
                                             }
                                         }
 
-                                        // Right side stats & icons
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        // Right side action indicator
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(GoldAccent.copy(alpha = 0.1f))
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
                                         ) {
-                                            // Quick player action
-                                            IconButton(
-                                                onClick = {
-                                                    viewModel.playRecitation(surah.arabicName, surah.id)
-                                                },
-                                                modifier = Modifier.size(32.dp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
+                                                Text(
+                                                    text = "قراءة",
+                                                    color = GoldAccent,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
                                                 Icon(
-                                                    imageVector = if (isPlaying) Icons.Default.Pause
-                                                    else Icons.Default.PlayArrow,
-                                                    contentDescription = "استماع التلاوة",
-                                                    tint = if (isPlaying) EmeraldSecondary else GoldAccent,
-                                                    modifier = Modifier.size(24.dp)
+                                                    imageVector = Icons.Default.MenuBook,
+                                                    contentDescription = "قراءة",
+                                                    tint = GoldAccent,
+                                                    modifier = Modifier.size(14.dp)
                                                 )
                                             }
                                         }

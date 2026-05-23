@@ -211,6 +211,13 @@ fun ProfileScreen(
                                         ) {
                                             Text("تعديل اسمك الشخصي ✍️", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        TextButton(
+                                            onClick = { viewModel.setLoginStatus(false) },
+                                            modifier = Modifier.height(28.dp).padding(0.dp)
+                                        ) {
+                                            Text("تسجيل خروج 🚪", color = MutedRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
