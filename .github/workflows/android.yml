@@ -34,7 +34,7 @@ jobs:
         SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
       if: ${{ env.SIGNING_KEY != '' }}
       id: sign_app
-      uses: r0adrunner/sign-android-release@v1
+      uses: Ilshidur/action-sign-android@v1
       with:
         releaseDirectory: app/build/outputs/apk/release
         signingKeyBase64: ${{ secrets.SIGNING_KEY }}
@@ -55,4 +55,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: app-release-signed-apk
-        path: ${{ steps.sign_app.outputs.signedReleaseFile }}
+        path: app/build/outputs/apk/release/*.apk
