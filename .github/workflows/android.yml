@@ -24,11 +24,31 @@ jobs:
     - name: Grant Execute Permission to Gradle
       run: chmod +x gradlew || true
 
-    - name: Build Debug APK
-      run: gradle assembleDebug
+    - name: Build Release & Debug APKs
+      run: |
+        gradle assembleDebug
+        gradle assembleRelease
 
-    - name: Upload APK Artifact
+    - name: Sign Release APK
+      if: ${{ secrets.SIGNING_KEY != '' }}
+      id: sign_app
+      uses: r0adrunner/sign-android-release@v1
+      with:
+        releaseDirectory: app/build/outputs/apk/release
+        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+        alias: ${{ secrets.ALIAS }}
+        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+    - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-debug-apk
         path: app/build/outputs/apk/debug/*.apk
+
+    - name: Upload Signed Release APK Artifact
+      if: ${{ secrets.SIGNING_KEY != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release-signed-apk
+        path: ${{ steps.sign_app.outputs.signedReleaseFile }}
