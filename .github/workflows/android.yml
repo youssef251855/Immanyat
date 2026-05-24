@@ -32,15 +32,18 @@ jobs:
     - name: Sign Release APK
       env:
         SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        ALIAS: ${{ secrets.ALIAS }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       if: ${{ env.SIGNING_KEY != '' }}
-      id: sign_app
-      uses: Ilshidur/action-sign-android@v1
-      with:
-        releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-        alias: ${{ secrets.ALIAS }}
-        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        echo "$SIGNING_KEY" | base64 --decode > release.keystore
+        APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+        echo "Using apksigner at: $APKSIGNER"
+        UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+        echo "Found APK to sign: $UNSIGNED_APK"
+        $APKSIGNER sign --ks release.keystore --ks-key-alias "$ALIAS" --ks-pass pass:"$KEYSTORE_PASSWORD" --key-pass pass:"$KEY_PASSWORD" --out app/build/outputs/apk/release/app-release-signed.apk "$UNSIGNED_APK"
+        rm -f release.keystore
 
     - name: Upload Debug APK Artifact
       uses: actions/upload-artifact@v4
@@ -55,4 +58,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: app-release-signed-apk
-        path: app/build/outputs/apk/release/*.apk
+        path: app/build/outputs/apk/release/app-release-signed.apk
