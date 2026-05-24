@@ -30,7 +30,9 @@ jobs:
         gradle assembleRelease
 
     - name: Sign Release APK
-      if: ${{ secrets.SIGNING_KEY != '' }}
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      if: ${{ env.SIGNING_KEY != '' }}
       id: sign_app
       uses: r0adrunner/sign-android-release@v1
       with:
@@ -47,7 +49,9 @@ jobs:
         path: app/build/outputs/apk/debug/*.apk
 
     - name: Upload Signed Release APK Artifact
-      if: ${{ secrets.SIGNING_KEY != '' }}
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      if: ${{ env.SIGNING_KEY != '' }}
       uses: actions/upload-artifact@v4
       with:
         name: app-release-signed-apk
