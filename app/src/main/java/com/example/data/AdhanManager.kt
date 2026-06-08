@@ -319,9 +319,12 @@ object AdhanManager {
 
             // Apply Daylight Saving adjustment if flagged manually (though system might already handle timezone offsets)
             if (isDst) {
+                // Determine if we actually need to forcefully add an hour.
+                // It's safer to just provide +1 hour if manually toggled, but a lot of systems 
+                // apply DST automatically. If they check it, we just add 60 mins.
                 val cal = Calendar.getInstance()
                 cal.time = rawTime
-                cal.add(Calendar.HOUR, 1)
+                cal.add(Calendar.HOUR_OF_DAY, 1)
                 rawTime = cal.time
             }
 

@@ -43,10 +43,35 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AppScreen
 import com.example.ui.viewmodel.EmaniatViewModel
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Initialize Start.io Ads SDK
+        try {
+            val sharedPrefs = getSharedPreferences("emaniat_prefs", MODE_PRIVATE)
+            val customAppId = sharedPrefs.getString("startio_app_id", "") ?: ""
+            val appIdToUse = if (customAppId.isNotBlank()) customAppId else {
+                try {
+                    val buildConfigId = BuildConfig.STARTIO_APP_ID
+                    if (buildConfigId.isNotBlank() && buildConfigId != "STARTIO_APP_ID") buildConfigId else "200676644"
+                } catch (e: Exception) {
+                    "200676644"
+                }
+            }
+            val initCtx = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                createAttributionContext("EmaniatLocation")
+            } else {
+                this
+            }
+            com.startapp.sdk.adsbase.StartAppSDK.init(initCtx, appIdToUse, false)
+            com.startapp.sdk.adsbase.StartAppSDK.enableReturnAds(false)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         
         // Immediate schedule of the background Adhan Alarm in background thread
         lifecycleScope.launch(Dispatchers.IO) {
@@ -60,7 +85,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
-                EmaniatApp()
+                var isSplashFinished by remember { mutableStateOf(false) }
+                if (!isSplashFinished) {
+                    SplashScreen(
+                        onSplashFinished = { isSplashFinished = true }
+                    )
+                } else {
+                    EmaniatApp()
+                }
             }
         }
     }
@@ -72,6 +104,51 @@ fun EmaniatApp(
 ) {
     val currentScreen = viewModel.currentScreen
     val playingState = viewModel.playbackState
+    val context = LocalContext.current
+    var showAdsterraDialog by remember { mutableStateOf(false) }
+    var isFirstRun by remember { mutableStateOf(true) }
+
+    LaunchedEffect(currentScreen) {
+        if (isFirstRun) {
+            isFirstRun = false
+        } else {
+            // Respecting "Ethical Monetization": absolutely NO pop-up ads when entering prayer pages, the Quran pages, or Home/Tasbih
+            val isHolyOrPrayerPage = currentScreen == AppScreen.QURAN || 
+                    currentScreen == AppScreen.ADHAN_SETTINGS || 
+                    currentScreen == AppScreen.HOME || 
+                    currentScreen == AppScreen.TASBIH
+            if (!viewModel.isVipPremiumActive && !isHolyOrPrayerPage) {
+                showAdsterraDialog = true
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(5 * 60 * 1000L) // 5 minutes
+            try {
+                if (!viewModel.isVipPremiumActive) {
+                    com.startapp.sdk.adsbase.StartAppAd.showAd(context)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(10 * 60 * 1000L) // every 10 minutes
+            val activeScreen = viewModel.currentScreen
+            val isHolyOrPrayerPage = activeScreen == AppScreen.QURAN || 
+                    activeScreen == AppScreen.ADHAN_SETTINGS || 
+                    activeScreen == AppScreen.HOME || 
+                    activeScreen == AppScreen.TASBIH
+            if (!viewModel.isVipPremiumActive && !isHolyOrPrayerPage) {
+                showAdsterraDialog = true
+            }
+        }
+    }
 
     // Tab selects inside Azkar tab (Azkar vs Duas)
     var azkarSubTabIsDuas by remember { mutableStateOf(false) }
@@ -174,6 +251,15 @@ fun EmaniatApp(
                     .background(Color.Transparent)
                     .navigationBarsPadding()
             ) {
+                if (!viewModel.isVipPremiumActive && (currentScreen == AppScreen.HOME || currentScreen == AppScreen.QURAN || currentScreen == AppScreen.LIBRARY || currentScreen == AppScreen.VIDEOS)) {
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        factory = { ctx ->
+                            com.startapp.sdk.ads.banner.Banner(ctx)
+                        }
+                    )
+                }
+
                 // BOTTOM NAVIGATION BAR TABS
                 Box(
                     modifier = Modifier
@@ -193,8 +279,11 @@ fun EmaniatApp(
                             Triple(AppScreen.HOME, "الرئيسية", Icons.Default.Home),
                             Triple(AppScreen.QURAN, "القرآن", Icons.Default.MenuBook),
                             Triple(AppScreen.AZKAR, "الأذكار", Icons.Default.WbSunny),
+                            Triple(AppScreen.LIBRARY, "المكتبة", Icons.Default.LibraryBooks),
+                            Triple(AppScreen.VIDEOS, "فيديو", Icons.Default.PlayCircle),
                             Triple(AppScreen.TASBIH, "السبحة", Icons.Default.Adjust),
-                            Triple(AppScreen.PROFILE, "ملفي والرحلة", Icons.Default.AccountCircle)
+                            Triple(AppScreen.PROFILE, "ملفي", Icons.Default.AccountCircle),
+                            Triple(AppScreen.DONATE, "تبرع", Icons.Default.Favorite)
                         )
 
                         tabs.forEach { item ->
@@ -208,13 +297,13 @@ fun EmaniatApp(
                                         viewModel.setScreen(screen)
                                         viewModel.triggerHaptic()
                                     }
-                                    .padding(vertical = 6.dp, horizontal = 10.dp),
+                                    .padding(vertical = 4.dp, horizontal = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(46.dp)
+                                        .size(42.dp)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
                                             if (isSelected) EmeraldMuted.copy(alpha = 0.25f)
@@ -226,14 +315,14 @@ fun EmaniatApp(
                                         imageVector = icon,
                                         contentDescription = label,
                                         tint = if (isSelected) GoldAccent else TextColorSecondary,
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = label,
                                     color = if (isSelected) GoldAccent else TextColorSecondary,
-                                    fontSize = 10.sp,
+                                    fontSize = 9.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                                 )
                             }
@@ -343,7 +432,134 @@ fun EmaniatApp(
                         onClose = { viewModel.setScreen(AppScreen.HOME) }
                     )
                 }
+                AppScreen.OASIS -> OasisScreen(viewModel = viewModel)
+                AppScreen.LIBRARY -> LibraryScreen(viewModel = viewModel)
+                AppScreen.VIDEOS -> VideosScreen(viewModel = viewModel)
+                AppScreen.DONATE -> DonateScreen(viewModel = viewModel)
                 else -> HomeScreen(viewModel = viewModel)
+            }
+
+            // Beautiful Adsterra Sponsor Promo Dialog (forced support)
+            if (showAdsterraDialog) {
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { showAdsterraDialog = false },
+                    properties = androidx.compose.ui.window.DialogProperties(
+                        dismissOnBackPress = true,
+                        dismissOnClickOutside = true
+                    )
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 24.dp)
+                            .shadow(24.dp, shape = RoundedCornerShape(20.dp))
+                            .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(20.dp)),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDarkGlass)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            // Top Star Icon
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(EmeraldSecondary.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "دعم التطبيق",
+                                    tint = GoldAccent,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Text(
+                                text = "دعم تطبيق إيمانيات 🕌",
+                                color = GoldAccent,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text(
+                                text = "مساهمتك البسيطة تمنحنا فرصة للاستمرار ونشر التطبيق على متجر Google Play وخدمة ملايين المسلمين.",
+                                color = TextColorPrimary,
+                                fontSize = 14.sp,
+                                lineHeight = 22.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "اضغط على زر عرض الإعلان أدناه للمساعدة والدعم السريع، جزاكم الله خيراً وجعلها في ميزان حسناتكم.",
+                                color = TextColorSecondary,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(24.dp))
+
+                            Button(
+                                onClick = {
+                                    try {
+                                        val adUrl = "https://www.effectivecpmnetwork.com/wykven1z2g?key=8354f640db8eebe8bf7568da45909e36"
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(adUrl))
+                                        context.startActivity(intent)
+                                        showAdsterraDialog = false
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .shadow(4.dp, RoundedCornerShape(12.dp))
+                            ) {
+                                Text(
+                                    text = "اضغط هنا لمشاهدة الإعلان ومساعدتنا 🚀",
+                                    color = LightWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedButton(
+                                onClick = { showAdsterraDialog = false },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextColorSecondary),
+                                border = BorderStroke(1.dp, CardBorder),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                            ) {
+                                Text(
+                                    text = "إغلاق نافذة الدعم",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

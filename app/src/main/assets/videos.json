@@ -1,0 +1,24 @@
+[
+  {
+    "id": "badr_1",
+    "category": "badr",
+    "title": "فيلم وثائقي: غزوة بدر الكبرى (يوم الفرقان)",
+    "description": "سرد متكامل وشامل لأدق تفاصيل غزوة بدر الكبرى المباركة، بدءاً من اعتراض القافلة، شورى النبي صلى الله عليه وسلم، وخطط التحام الصفوف والمدد الإلهي العظيم للمؤمنين الصابرين.",
+    "duration": "18:40",
+    "speaker": "أثرياء السرد والتفسير الإيماني",
+    "videoUrl": "https://gyepptdcymcwzotdgyrn.supabase.co/storage/v1/object/sign/Test/Badr.mp4?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xZjRiNmQzNC1iZDExLTQ4ZjAtYjc1OC1kMTNjMzgwYjBjYWMiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJUZXN0L0JhZHIubXA0IiwiaWF0IjoxNzgwNDE3NDMzLCJleHAiOjE4MTE5NTM0MzN9.7Put-8ievXrow3AX0751Ex7a0_76-CUvTYDs5C1C6JU",
+    "views": "٨٥ ألف مشاهدة • عبر شبكة البث",
+    "gradientColors": ["#0F5A3E", "#03221E"]
+  },
+  {
+    "id": "uhud_1",
+    "category": "uhud",
+    "title": "فيلم وثائقي: غزوة أحد العظيمة (العِبر والبلاء)",
+    "description": "سرد تفصيلي لمجريات غزوة أحد العظيمة، خطة جبل الرماة الحربية العبقرية، الاستدراج العسكري العنيف بعد ترك الجبل، استشهاد سيد الشهداء حمزة رضي الله عنه، والدروس النبوية الإيمانية الخالدة للصحبة الكرام.",
+    "duration": "20:05",
+    "speaker": "أثرياء السرد والتفسير الإيماني",
+    "videoUrl": "https://gyepptdcymcwzotdgyrn.supabase.co/storage/v1/object/sign/Test/auht.mp4?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xZjRiNmQzNC1iZDExLTQ4ZjAtYjc1OC1kMTNjMzgwYjBjYWMiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJUZXN0L2F1aHQubXA0IiwiaWF0IjoxNzgwNDE3MTc0LCJleHAiOjE4MTE5NTMxNzR9._8t9pMhT93vkyaFGNmrT1O6PdNcMo9FLiRvrI46XVeU",
+    "views": "٧٢ ألف مشاهدة • عبر شبكة البث",
+    "gradientColors": ["#AD7813", "#472D02"]
+  }
+]

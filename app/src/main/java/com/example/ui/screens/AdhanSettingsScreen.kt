@@ -11,6 +11,8 @@ import android.hardware.SensorManager
 import android.location.Geocoder
 import android.os.Build
 import android.util.Log
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +48,8 @@ import androidx.core.content.ContextCompat
 import com.example.data.AdhanManager
 import com.example.data.MosqueModel
 import com.example.data.PrayerTimeInfo
+import com.example.data.UpdateManager
+import com.example.data.UpdateInfo
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
@@ -78,14 +82,14 @@ fun AdhanSettingsScreen(
     }
 
     // GPS location fetcher callback
-    val locContext = remember(context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.createAttributionContext("Location")
+    val fusedLocationClient = remember(context) {
+        val attributionContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.applicationContext.createAttributionContext("EmaniatLocation")
         } else {
-            context
+            context.applicationContext
         }
+        LocationServices.getFusedLocationProviderClient(attributionContext)
     }
-    val fusedLocationClient = remember(locContext) { LocationServices.getFusedLocationProviderClient(locContext) }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -98,7 +102,12 @@ fun AdhanSettingsScreen(
                         scope.launch {
                             var city = "موقعي الحالي"
                             try {
-                                val geocoder = Geocoder(context, Locale("ar"))
+                                val attributionContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    context.applicationContext.createAttributionContext("EmaniatLocation")
+                                } else {
+                                    context.applicationContext
+                                }
+                                val geocoder = Geocoder(attributionContext, Locale("ar"))
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                     geocoder.getFromLocation(loc.latitude, loc.longitude, 1) { addresses ->
                                         if (addresses.isNotEmpty()) {
@@ -350,6 +359,142 @@ fun TimesAndAudioTab(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                }
+            }
+        }
+
+        // Manual City Preset Selection
+        item {
+            var isExpanded by remember { mutableStateOf(false) }
+            val presetCities = listOf(
+                "مكة المكرمة" to (21.4225 to 39.8262),
+                "المدينة المنورة" to (24.4686 to 39.6142),
+                "القدس الشريف" to (31.7683 to 35.2137),
+                "القاهرة" to (30.0444 to 31.2357),
+                "الرياض" to (24.7136 to 46.6753),
+                "دبي" to (25.2048 to 55.2708),
+                "عمان" to (31.9539 to 35.9106),
+                "بيروت" to (33.8938 to 35.5018),
+                "بغداد" to (33.3128 to 44.3615),
+                "دمشق" to (33.5138 to 36.2765),
+                "الكويت" to (29.3759 to 47.9774),
+                "المنامة" to (26.2285 to 50.5860),
+                "الدوحة" to (25.2854 to 51.5310),
+                "مسقط" to (23.5859 to 58.4059),
+                "صنعاء" to (15.3694 to 44.1910),
+                "طرابلس" to (32.8872 to 13.1913),
+                "تونس" to (36.8065 to 10.1815),
+                "الجزائر" to (36.7525 to 3.0360),
+                "الرباط" to (34.0209 to -6.8416),
+                "الخرطوم" to (15.5007 to 32.5599)
+            )
+
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.triggerHaptic()
+                                isExpanded = !isExpanded
+                            }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "اختر يدويًا",
+                                tint = GoldAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "اختر مدينتك يدويًا 🕌",
+                                    color = LightWhite,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "يوفر 90% طاقة ويحمي الخصوصية التامة دون تتبع GPS",
+                                    color = EmeraldSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "توسيع",
+                            tint = GoldAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    AnimatedVisibility(visible = isExpanded) {
+                        Column {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "اضغط على اسم مدينتك لتثبيت الموقع الجغرافي وحساب المواقيت مطابقة للقرى والبلدان:",
+                                color = TextColorSecondary,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+
+                            val chunks = presetCities.chunked(3)
+                            chunks.forEach { rowCities ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    rowCities.forEach { preset ->
+                                        val cityName = preset.first
+                                        val lat = preset.second.first
+                                        val lon = preset.second.second
+                                        val isSelected = locationName == cityName
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (isSelected) EmeraldMuted.copy(alpha = 0.4f)
+                                                    else CardBorder.copy(alpha = 0.15f)
+                                                )
+                                                .border(
+                                                    0.5.dp,
+                                                    if (isSelected) GoldAccent else Color.Transparent,
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .clickable {
+                                                    viewModel.triggerHaptic()
+                                                    AdhanManager.saveCoordinates(context, lat, lon, cityName)
+                                                    onRefresh()
+                                                    Toast.makeText(context, "تم تحديد $cityName وحساب مواقيت الصلاة بدقة 🕋", Toast.LENGTH_SHORT).show()
+                                                }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = cityName,
+                                                color = if (isSelected) GoldAccent else LightWhite,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                    if (rowCities.size < 3) {
+                                        repeat(3 - rowCities.size) {
+                                            Box(modifier = Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -887,6 +1032,7 @@ fun SmartSettingsTab(
     viewModel: EmaniatViewModel,
     onRefresh: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var volume by remember { mutableStateOf(AdhanManager.getAthanVolume(context)) }
     var isGradual by remember { mutableStateOf(AdhanManager.isGradualVolume(context)) }
     var isVibrate by remember { mutableStateOf(AdhanManager.isVibrateOnAdhan(context)) }
@@ -1295,6 +1441,242 @@ fun SmartSettingsTab(
                         colors = SwitchDefaults.colors(checkedThumbColor = LightWhite, checkedTrackColor = EmeraldSecondary)
                     )
                 }
+            }
+        }
+
+        // --- Battery restrictions guide ---
+        item {
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.BatteryAlert,
+                            contentDescription = "البطارية والتنبيهات",
+                            tint = GoldAccent,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "حل مشكلة انقطاع الأذان بالخلفية 🔋",
+                            color = GoldAccent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "يقوم نظام الأندرويد في الهواتف الحديثة بإغلاق التطبيقات العاملة في الخلفية لتوفير الطاقة، مما يمنع الأذان والتنبيهات من العمل في وقتها المحدد.",
+                        color = LightWhite,
+                        fontSize = 11.sp,
+                        lineHeight = 18.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "لضمان دقة الأذان، يرجى تعطيل تحسين استهلاك البطارية (Battery Optimization) لتطبيق إيمانيات من خلال الخطوات البسيطة التالية:",
+                        color = TextColorSecondary,
+                        fontSize = 10.sp,
+                        lineHeight = 16.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val steps = listOf(
+                        "1️⃣ اضغط على الزر أدناه للانتقال إلى قسم ضبط طاقة التطبيق.",
+                        "2️⃣ ابحث عن تطبيق (إيمانيات) من قائمة التطبيقات النشطة.",
+                        "3️⃣ اختر خيار (غير مقيد / Unrestricted) عِوضًا عن (محسّن / Optimized)."
+                    )
+
+                    steps.forEach { step ->
+                        Text(
+                            text = step,
+                            color = LightWhite,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(vertical = 3.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.triggerHaptic()
+                            try {
+                                val intent = Intent().apply {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                        action = android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                                    } else {
+                                        action = android.provider.Settings.ACTION_SETTINGS
+                                    }
+                                }
+                                context.startActivity(intent)
+                                Toast.makeText(context, "الرجاء تحديد 'تطبيق إيمانيات' وتغيير وضعه لـ 'غير مقيد'.", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                try {
+                                    val intent = Intent().apply {
+                                        action = android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                                        data = Uri.fromParts("package", context.packageName, null)
+                                    }
+                                    context.startActivity(intent)
+                                    Toast.makeText(context, "تفضل بالانتقال للبطارية وتعديل القيود.", Toast.LENGTH_LONG).show()
+                                } catch (ex: Exception) {
+                                    Toast.makeText(context, "لم نتمكن من فتح الإعدادات تلقائياً. الرجاء تعديلها يدوياً من إعدادات الهاتف.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SettingsApplications,
+                            contentDescription = "الإعدادات",
+                            tint = LightWhite,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "اذهب لإعدادات بطارية تطبيقك الآن ⚙️",
+                            color = LightWhite,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // --- Manual App Update Checks panel ---
+        item {
+            var isCheckingUpdatesState by remember { mutableStateOf(false) }
+            var updateUrlOverrideText by remember { mutableStateOf(UpdateManager.getUpdateUrl(context)) }
+            var manualUpdateInfoState by remember { mutableStateOf<UpdateInfo?>(null) }
+            var showManualUpdateDialogState by remember { mutableStateOf(false) }
+            var manualUpdateForcedState by remember { mutableStateOf(false) }
+
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "تحديثات التطبيق الذكية 🚀",
+                    color = GoldAccent,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+
+                Text(
+                    text = "تحقق يدويًا من توفر إصدار أحدث لتنزيل الميزات والتحسينات المبتكرة فور صدورها.",
+                    color = TextColorSecondary,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // Current version parameters
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CardBorder.copy(alpha = 0.2f))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "إصدار التطبيق الحالي:", color = TextColorSecondary, fontSize = 11.sp)
+                        Text(
+                            text = "V${UpdateManager.getCurrentVersionName(context)} (${UpdateManager.getCurrentVersionCode(context)})",
+                            color = LightWhite,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (isCheckingUpdatesState) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = EmeraldSecondary,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Button(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                isCheckingUpdatesState = true
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) {
+                                        UpdateManager.fetchUpdateInfo(context, updateUrlOverrideText.trim())
+                                    }
+                                    isCheckingUpdatesState = false
+                                    if (result != null) {
+                                        val currentCode = UpdateManager.getCurrentVersionCode(context)
+                                        if (result.latestVersionCode > currentCode) {
+                                            manualUpdateInfoState = result
+                                            manualUpdateForcedState = currentCode < result.minRequiredVersionCode || result.isForceUpdate
+                                            showManualUpdateDialogState = true
+                                        } else {
+                                            Toast.makeText(context, "إصدارك الحالي محدث ومستقر بالكامل! ✨", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "التحقق فشل! تأكد من وجود إنترنت ورابط التحديث المكتوب.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text(text = "افحص الآن", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Developer config URL override input fields
+                Text(
+                    text = "رابط ملف تكوين التحديث (JSON URL):",
+                    color = TextColorSecondary,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                OutlinedTextField(
+                    value = updateUrlOverrideText,
+                    onValueChange = { newVal ->
+                        updateUrlOverrideText = newVal
+                        UpdateManager.setUpdateUrl(context, newVal.trim())
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = LightWhite,
+                        unfocusedTextColor = LightWhite,
+                        focusedBorderColor = GoldAccent,
+                        unfocusedBorderColor = CardBorder,
+                        focusedContainerColor = DarkBackground.copy(alpha = 0.5f),
+                        unfocusedContainerColor = DarkBackground.copy(alpha = 0.3f)
+                    ),
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 10.sp),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                )
+            }
+
+            if (showManualUpdateDialogState && manualUpdateInfoState != null) {
+                UpdateAlertDialog(
+                    updateInfo = manualUpdateInfoState!!,
+                    isForced = manualUpdateForcedState,
+                    onDismissRequest = {
+                        showManualUpdateDialogState = false
+                    }
+                )
             }
         }
     }

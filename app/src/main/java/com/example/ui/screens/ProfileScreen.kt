@@ -188,12 +188,30 @@ fun ProfileScreen(
                                             }
                                         }
                                     } else {
-                                        Text(
-                                            text = viewModel.userName,
-                                            color = LightWhite,
-                                            style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = viewModel.userName,
+                                                color = LightWhite,
+                                                style = MaterialTheme.typography.titleLarge,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (viewModel.isVipPremiumActive) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(Brush.linearGradient(listOf(GoldAccent, Color(0xFFFFA500))))
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "PRO 👑",
+                                                        color = Color.Black,
+                                                        fontSize = 8.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Text(
                                             text = "مستوى التقى: " + when(level) {
                                                 in 1..2 -> "السائر الطيب ☘️"

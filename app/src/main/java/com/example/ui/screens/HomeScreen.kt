@@ -52,7 +52,18 @@ fun HomeScreen(
     val completedCount by viewModel.completedWorshipCount.collectAsState()
 
     val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("emaniat_prefs", android.content.Context.MODE_PRIVATE) }
+    val hideUpdatesKey = "hide_updates_dialog_2026_06_master"
+    var showUpdatesDialog by remember { mutableStateOf(!sharedPrefs.getBoolean(hideUpdatesKey, false)) }
+    var dontShowAgain by remember { mutableStateOf(false) }
     var currentTime by remember { mutableStateOf("") }
+    
+    val onDismissUpdates = {
+        if (dontShowAgain) {
+            sharedPrefs.edit().putBoolean(hideUpdatesKey, true).apply()
+        }
+        showUpdatesDialog = false
+    }
     
     // Update real-time clock smoothly
     LaunchedEffect(Unit) {
@@ -110,6 +121,279 @@ fun HomeScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         ElegantBackgroundPattern()
+
+        if (showUpdatesDialog) {
+            AlertDialog(
+                onDismissRequest = onDismissUpdates,
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.2.dp, GoldAccent.copy(alpha = 0.5f)), RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                containerColor = DarkBackground.copy(alpha = 0.98f),
+                title = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(GoldAccent.copy(alpha = 0.15f), CircleShape)
+                                .border(1.dp, GoldAccent.copy(alpha = 0.3f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NewReleases,
+                                contentDescription = "التحديثات الجديدة",
+                                tint = GoldAccent,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "التحديثات الكبرى المكتملة 🌟",
+                            color = GoldAccent,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Text(
+                                text = "أهلاً بك في تطبيق إيمانيات! يسعدنا إعلامك ببدء تفعيل ميزات إيمانية ذكية كبرى صممت خصيصاً لمساعدتك على إتقان القرآن الكريم وحفظه وتلاوته:",
+                                color = LightWhite,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Right,
+                                lineHeight = 18.sp,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
+
+                            // Feature 1
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "التسميع الذكي في جميع الـ 114 سورة 🎙️🧠",
+                                        color = EmeraldSecondary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = null,
+                                        tint = EmeraldSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "أصبح بإمكانك التسميع الفوري لجميع سور القرآن الـ 114 بالكامل (بالصوت أو الكتابة) مع مراجعة دقيقة وميزان تجويدي عبر ذكاء Gemini الاصطناعي.",
+                                    color = TextColorSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    textAlign = TextAlign.Right,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .background(GoldAccent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                                        .border(0.5.dp, GoldAccent.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "📍 المكان: بجانب كل سورة في شاشة المصحف، وأيضاً زر مرئي داخل صفحة قراءة السورة نفسها لتسميع سهل أثناء التلاوة!",
+                                        color = GoldAccent,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(color = CardBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+                            // Feature 2
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "المصحف المطور ومنع تداخل التمرير 📜📱",
+                                        color = EmeraldSecondary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.MenuBook,
+                                        contentDescription = null,
+                                        tint = EmeraldSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "تمت إعادة بناء قائمة السور لتكون مسطحة وسريعة جداً وهادئة، لتقضي على أي تداخل لمؤشرات تصفح السور تماماً، لدعم الهواتف بجميع أحجامها.",
+                                    color = TextColorSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    textAlign = TextAlign.Right,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .background(GoldAccent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                                        .border(0.5.dp, GoldAccent.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "📍 المكان: تبويب \"قراءة وتسميع\" بالواجهة الرئيسية للمصحف.",
+                                        color = GoldAccent,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(color = CardBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+                            // Feature 3
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "أصوات كبار القراء والمشغل الصوتي المدمج 🎧🎶",
+                                        color = EmeraldSecondary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Audiotrack,
+                                        contentDescription = null,
+                                        tint = EmeraldSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "استمع وراجع تلاوتك مباشرة بروايات كبار القراء (مشاري العفاسي، عبد الباسط عبد الصمد، سعد الغامدي، ماهر المعيقلي، محمد صديق المنشاوي) لأي سورة من الـ 114 مع مشغل كامل.",
+                                    color = TextColorSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    textAlign = TextAlign.Right,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .background(GoldAccent.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                                        .border(0.5.dp, GoldAccent.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "📍 المكان: التبويب الثاني \"أصوات الشيوخ\" بشاشة القرآن الكريم.",
+                                        color = GoldAccent,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Right
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = CardBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { dontShowAgain = !dontShowAgain }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "عدم إظهار هذه الرسالة مرة أخرى",
+                                color = LightWhite.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Right
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Checkbox(
+                                checked = dontShowAgain,
+                                onCheckedChange = { dontShowAgain = it },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = GoldAccent,
+                                    uncheckedColor = GoldAccent.copy(alpha = 0.4f),
+                                    checkmarkColor = DarkBackground
+                                ),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onDismissUpdates()
+                            viewModel.triggerHaptic()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = "نفع الله بنا وبكم، استكشف التحديثات الآن ✨",
+                            color = DarkBackground,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -184,6 +468,83 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // BEAUTIFUL GOLDEN OASIS PREMIUM BANNER
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                EmeraldPrimary.copy(alpha = 0.3f),
+                                GoldAccent.copy(alpha = 0.15f)
+                            )
+                        )
+                    )
+                    .border(
+                        BorderStroke(1.5.dp, Brush.horizontalGradient(listOf(GoldAccent, CardBorder))),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .clickable {
+                        viewModel.triggerHaptic()
+                        viewModel.setScreen(AppScreen.OASIS)
+                    }
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "الدخول للواحة",
+                        tint = GoldAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+
+                    Column(
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "بوابة الميزات العشر المبتكرة الشاملة (الواحة الإيمانية) ✨",
+                            color = GoldAccent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "تصفح واستكشف بوصلة الكعبة، حاسبة الزكاة الذكية، أسماء الله الحسنى، دفتر الأفكار، أصوات السكينة والمزيد صُمم خصيصاً لتعزيز أورادك.",
+                            color = LightWhite,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(GoldAccent.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "الواحة الروحانية",
+                            tint = GoldAccent,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // INTERACTIVE LEVEL / LEVEL CARD
             GlassCard(
                 modifier = Modifier
@@ -196,12 +557,30 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1.5f)) {
-                        Text(
-                            text = "المستوى الإيماني: ${userStreak?.level ?: 1}",
-                            color = GoldAccent,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "المستوى الإيماني: ${userStreak?.level ?: 1}",
+                                color = GoldAccent,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (viewModel.isVipPremiumActive) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Brush.linearGradient(listOf(GoldAccent, Color(0xFFFFA500))))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "PRO 👑",
+                                        color = Color.Black,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "رتبتك: " + when(userStreak?.level ?: 1) {
@@ -688,7 +1067,7 @@ fun HomeScreen(
 
             // QUICK NAVIGATION SHORTCUTS
             Text(
-                text = "الوصول السريع للأذكار والسبحة",
+                text = "الوصول السريع للأقسام والعبادات",
                 color = LightWhite,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
@@ -702,9 +1081,11 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 listOf(
-                    Triple("أذكار الصباح", Icons.Default.WbSunny, AppScreen.AZKAR),
+                    Triple("أذكار اليوم", Icons.Default.WbSunny, AppScreen.AZKAR),
                     Triple("السبحة", Icons.Default.Adjust, AppScreen.TASBIH),
-                    Triple("الأدعية", Icons.Default.Favorite, AppScreen.DUAS)
+                    Triple("المرئيات", Icons.Default.PlayCircle, AppScreen.VIDEOS),
+                    Triple("الأدعية", Icons.Default.Favorite, AppScreen.DUAS),
+                    Triple("المكتبة", Icons.Default.LibraryBooks, AppScreen.LIBRARY)
                 ).forEach { grid ->
                     val (title, icon, screen) = grid
                     Box(

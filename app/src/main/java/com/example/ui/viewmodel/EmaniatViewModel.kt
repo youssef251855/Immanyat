@@ -31,7 +31,11 @@ enum class AppScreen {
     CHALLENGES,
     PROFILE,
     JOURNEY,
-    ADHAN_SETTINGS
+    ADHAN_SETTINGS,
+    LIBRARY,
+    VIDEOS,
+    DONATE,
+    OASIS
 }
 
 data class PlaybackState(
@@ -66,7 +70,14 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
 
     // Playback State
     var playbackState by mutableStateOf(PlaybackState(
-        reader = if (prefs.getString("quran_reciter", "afs") == "afs") "الشيخ مشاري العفاسي" else "الشيخ عبد الباسط عبد الصمد"
+        reader = when (prefs.getString("quran_reciter", "afs")) {
+            "afs" -> "الشيخ مشاري العفاسي"
+            "basit" -> "الشيخ عبد الباسط عبد الصمد"
+            "ghamdi" -> "الشيخ سعد الغامدي"
+            "maher" -> "الشيخ ماهر المعيقلي"
+            "minsh" -> "الشيخ محمد صديق المنشاوي"
+            else -> "الشيخ مشاري العفاسي"
+        }
     ))
         private set
 
@@ -158,12 +169,23 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         triggerHaptic()
     }
 
+    fun getReaderLabelFor(reciter: String): String {
+        return when (reciter) {
+            "afs" -> "الشيخ مشاري العفاسي"
+            "basit" -> "الشيخ عبد الباسط عبد الصمد"
+            "ghamdi" -> "الشيخ سعد الغامدي"
+            "maher" -> "الشيخ ماهر المعيقلي"
+            "minsh" -> "الشيخ محمد صديق المنشاوي"
+            else -> "الشيخ مشاري العفاسي"
+        }
+    }
+
     fun setReciter(reciter: String) {
         selectedReciter = reciter
         prefs.edit().putString("quran_reciter", reciter).apply()
         triggerHaptic()
         
-        val readerLabel = if (reciter == "afs") "الشيخ مشاري العفاسي" else "الشيخ عبد الباسط عبد الصمد"
+        val readerLabel = getReaderLabelFor(reciter)
         
         // If we are currently playing, restart with the new reciter stream!
         if (playbackState.isPlaying) {
@@ -304,7 +326,7 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        val readerLabel = if (selectedReciter == "afs") "الشيخ مشاري العفاسي" else "الشيخ عبد الباسط عبد الصمد"
+        val readerLabel = getReaderLabelFor(selectedReciter)
 
         if (playbackState.surahIndex == surahIndex && quranExoPlayer != null) {
             togglePlayback()
@@ -346,8 +368,16 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             "asset:///$assetPath"
         } else if (selectedReciter == "afs") {
             "https://server8.mp3quran.net/afs/$fileName"
-        } else {
+        } else if (selectedReciter == "basit") {
             "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
+        } else if (selectedReciter == "ghamdi") {
+            "https://server11.mp3quran.net/s_gmd/$fileName"
+        } else if (selectedReciter == "maher") {
+            "https://server12.mp3quran.net/maher/$fileName"
+        } else if (selectedReciter == "minsh") {
+            "https://server11.mp3quran.net/minsh/$fileName"
+        } else {
+            "https://server8.mp3quran.net/afs/$fileName"
         }
 
         viewModelScope.launch {
@@ -404,7 +434,7 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         stopRecitationOnly()
         playbackState = PlaybackState(
             isPlaying = false,
-            reader = if (selectedReciter == "afs") "الشيخ مشاري العفاسي" else "الشيخ عبد الباسط عبد الصمد"
+            reader = getReaderLabelFor(selectedReciter)
         )
         triggerHaptic()
     }
@@ -447,10 +477,24 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         } else {
             // If nothing is loaded, direct start of the stream to avoid recursive loops
             val surahName = playbackState.surahName.ifEmpty { "الفاتحة" }
-            val readerLabel = if (selectedReciter == "afs") "الشيخ مشاري العفاسي" else "الشيخ عبد الباسط عبد الصمد"
+            val readerLabel = getReaderLabelFor(selectedReciter)
             startNewStream(surahName, playbackState.surahIndex, readerLabel)
         }
         triggerHaptic()
+    }
+
+    fun pauseQuranRecitation() {
+        val mp = quranExoPlayer
+        if (mp != null) {
+            try {
+                if (mp.isPlaying) {
+                    mp.pause()
+                    playbackState = playbackState.copy(isPlaying = false)
+                }
+            } catch (e: Exception) {
+                Log.e("EmaniatViewModel", "Error pausing Quran recitation", e)
+            }
+        }
     }
 
     fun setPlaybackProgress(progress: Float) {
@@ -536,10 +580,13 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         }
 
         val fileName = String.format(java.util.Locale.US, "%03d.mp3", surahIndex)
-        val urlString = if (reciter == "afs") {
-            "https://server8.mp3quran.net/afs/$fileName"
-        } else {
-            "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
+        val urlString = when (reciter) {
+            "afs" -> "https://server8.mp3quran.net/afs/$fileName"
+            "basit" -> "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
+            "ghamdi" -> "https://server11.mp3quran.net/s_gmd/$fileName"
+            "maher" -> "https://server12.mp3quran.net/maher/$fileName"
+            "minsh" -> "https://server11.mp3quran.net/minsh/$fileName"
+            else -> "https://server8.mp3quran.net/afs/$fileName"
         }
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -617,6 +664,15 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Haptics controller
+    var isVipPremiumActive by mutableStateOf(prefs.getBoolean("vip_premium_active", false))
+        private set
+
+    fun setVipPremiumStatus(active: Boolean) {
+        isVipPremiumActive = active
+        prefs.edit().putBoolean("vip_premium_active", active).apply()
+        triggerHaptic()
+    }
+
     fun triggerHaptic() {
         if (!isVibrationEnabled) return
         val vibrator = getApplication<Application>().getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator

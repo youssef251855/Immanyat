@@ -102,6 +102,8 @@ dependencies {
   implementation(libs.adhan)
   implementation(libs.retrofit)
   implementation(libs.androidx.media3.exoplayer)
+  implementation("androidx.media3:media3-ui:1.5.1")
+  implementation("com.startapp:inapp-sdk:4.11.0")
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
