@@ -85,8 +85,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
+                val context = LocalContext.current
+                val isAthanPlaying by com.example.service.AdhanPlayerService.isAthanPlaying.collectAsState()
+                val isIqamahPlaying by com.example.service.AdhanPlayerService.isIqamahPlaying.collectAsState()
+                val currentAthanArabic by com.example.service.AdhanPlayerService.currentAthanArabic.collectAsState()
+
                 var isSplashFinished by remember { mutableStateOf(false) }
-                if (!isSplashFinished) {
+
+                if (isAthanPlaying || isIqamahPlaying) {
+                    com.example.ui.screens.AdhanAlarmScreen(
+                        prayerArabic = currentAthanArabic,
+                        isIqamah = isIqamahPlaying,
+                        onStopClick = {
+                            com.example.service.AdhanPlayerService.stopAthan(context)
+                        }
+                    )
+                } else if (!isSplashFinished) {
                     SplashScreen(
                         onSplashFinished = { isSplashFinished = true }
                     )

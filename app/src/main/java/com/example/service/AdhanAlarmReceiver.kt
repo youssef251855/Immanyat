@@ -93,6 +93,32 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             notificationManager.createNotificationChannel(chan)
         }
 
+        // Active Audio Reminder for Alert Before Adhan
+        try {
+            val alertUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+            val ringtone = android.media.RingtoneManager.getRingtone(context, alertUri)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                ringtone?.audioAttributes = attrs
+            }
+            ringtone?.play()
+            
+            // Limit playing time to 4 seconds to serve as a gentle beep/alarm
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    if (ringtone?.isPlaying == true) {
+                        ringtone.stop()
+                    }
+                } catch (t: Throwable) {}
+            }, 4000L)
+        } catch (e: Exception) {
+            Log.e("AdhanAlarmReceiver", "Error playing pre-adhan audio alert", e)
+        }
+
         // Trigger safe vibration for early alarm
         val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         if (vibrator != null && vibrator.hasVibrator()) {

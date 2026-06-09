@@ -32,6 +32,7 @@ class AdhanPlayerService : Service() {
 
     companion object {
         val isAthanPlaying = MutableStateFlow(false)
+        val isIqamahPlaying = MutableStateFlow(false)
         val currentAthanPrayer = MutableStateFlow("")
         val currentAthanArabic = MutableStateFlow("")
         
@@ -211,7 +212,7 @@ class AdhanPlayerService : Service() {
                                 startProgressiveVolumeRise()
                             } else if (state == Player.STATE_ENDED) {
                                 Log.d("AdhanPlayerService", "Athan play completed")
-                                stopSelf()
+                                playIqamahAudio()
                             }
                         }
                         
@@ -228,6 +229,62 @@ class AdhanPlayerService : Service() {
                 exoPlayer = exo
             } catch (e: Exception) {
                 Log.e("AdhanPlayerService", "Error setting up ExoPlayer", e)
+                stopSelf()
+            }
+        }
+    }
+
+    private fun playIqamahAudio() {
+        Log.d("AdhanPlayerService", "Transitioning to Iqamah audio playback")
+        isIqamahPlaying.value = true
+        isAthanPlaying.value = false
+        
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                // Release current player first
+                exoPlayer?.let {
+                    try {
+                        if (it.isPlaying) {
+                            it.stop()
+                        }
+                    } catch (t: Throwable) {}
+                    it.release()
+                }
+                exoPlayer = null
+
+                // Build a fresh ExoPlayer to play the Iqamah
+                val player = ExoPlayer.Builder(this@AdhanPlayerService).build().apply {
+                    val attrs = AudioAttributes.Builder()
+                        .setUsage(C.USAGE_ALARM)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                        .build()
+                    setAudioAttributes(attrs, false)
+                    
+                    val iqamahUrl = "https://www.islamcan.com/audio/adhan/iqama.mp3"
+                    setMediaItem(MediaItem.fromUri(iqamahUrl))
+                    
+                    volume = AdhanManager.getAthanVolume(this@AdhanPlayerService)
+                    prepare()
+                    
+                    addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_READY) {
+                                play()
+                            } else if (state == Player.STATE_ENDED) {
+                                Log.d("AdhanPlayerService", "Iqamah playback completed successfully")
+                                stopSelf()
+                            }
+                        }
+                        
+                        override fun onPlayerError(error: PlaybackException) {
+                            Log.e("AdhanPlayerService", "ExoPlayer error during Iqamah playback", error)
+                            stopSelf()
+                        }
+                    })
+                }
+                exoPlayer = player
+            } catch (e: Exception) {
+                Log.e("AdhanPlayerService", "Failed to setup Iqamah audio", e)
                 stopSelf()
             }
         }
@@ -277,6 +334,7 @@ class AdhanPlayerService : Service() {
     override fun onDestroy() {
         Log.d("AdhanPlayerService", "Service onDestroy code")
         isAthanPlaying.value = false
+        isIqamahPlaying.value = false
         
         // Stop progressive volume jobs
         progressiveVolumeJob?.cancel()
