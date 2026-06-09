@@ -375,7 +375,7 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         } else if (selectedReciter == "maher") {
             "https://server12.mp3quran.net/maher/$fileName"
         } else if (selectedReciter == "minsh") {
-            "https://server11.mp3quran.net/minsh/$fileName"
+            "https://server10.mp3quran.net/minsh/$fileName"
         } else {
             "https://server8.mp3quran.net/afs/$fileName"
         }
@@ -585,7 +585,7 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             "basit" -> "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
             "ghamdi" -> "https://server11.mp3quran.net/s_gmd/$fileName"
             "maher" -> "https://server12.mp3quran.net/maher/$fileName"
-            "minsh" -> "https://server11.mp3quran.net/minsh/$fileName"
+            "minsh" -> "https://server10.mp3quran.net/minsh/$fileName"
             else -> "https://server8.mp3quran.net/afs/$fileName"
         }
 
