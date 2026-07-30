@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.R
 import com.example.MainActivity
 import com.example.data.AdhanManager
 import kotlinx.coroutines.*
@@ -181,7 +182,6 @@ class AdhanPlayerService : Service() {
         val muadhin = AdhanManager.getMuadhinForPrayer(this, prayerName)
         val file = AdhanManager.getLocalAthanFile(this, muadhin)
         val useLocal = AdhanManager.isAthanDownloaded(this, muadhin)
-        val streamUrl = AdhanManager.MUADHIN_URLS[muadhin] ?: AdhanManager.MUADHIN_URLS.values.first()
 
         serviceScope.launch(Dispatchers.Main) {
             try {
@@ -192,7 +192,7 @@ class AdhanPlayerService : Service() {
                         .build()
                     setAudioAttributes(attrs, false)
                     
-                    val uri = if (useLocal) file.absolutePath else streamUrl
+                    val uri = if (useLocal) file.absolutePath else "android.resource://${packageName}/${R.raw.adhan}"
                     setMediaItem(MediaItem.fromUri(uri))
                     
                     if (useLocal) {
@@ -260,7 +260,7 @@ class AdhanPlayerService : Service() {
                         .build()
                     setAudioAttributes(attrs, false)
                     
-                    val iqamahUrl = "https://www.islamcan.com/audio/adhan/iqama.mp3"
+                    val iqamahUrl = "android.resource://${packageName}/${R.raw.iqamah}"
                     setMediaItem(MediaItem.fromUri(iqamahUrl))
                     
                     volume = AdhanManager.getAthanVolume(this@AdhanPlayerService)
