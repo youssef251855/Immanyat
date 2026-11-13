@@ -32,10 +32,13 @@ enum class AppScreen {
     PROFILE,
     JOURNEY,
     ADHAN_SETTINGS,
+    ADHAN_ALARM,
     LIBRARY,
     VIDEOS,
     DONATE,
-    OASIS
+    OASIS,
+    QIBLA,
+    ZAKAT
 }
 
 data class PlaybackState(
@@ -65,8 +68,17 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
 
     // User customized profile
     var userName by mutableStateOf(prefs.getString("user_name", "عبد الله") ?: "عبد الله")
+    var userEmail by mutableStateOf(prefs.getString("user_email", "") ?: "")
+    var userId by mutableStateOf(prefs.getString("user_id", "") ?: "")
     var userAvatarIndex by mutableStateOf(0) // indices for beautiful vectors
     var userTitle by mutableStateOf(prefs.getString("user_title", "الباحث عن الطاعة") ?: "الباحث عن الطاعة")
+
+    // Cloud sync state
+    var isCloudSyncing by mutableStateOf(false)
+        private set
+    var cloudSyncStatusMessage by mutableStateOf("")
+        private set
+    var lastSyncTimeString by mutableStateOf(prefs.getString("last_sync_time", "غير متزامن") ?: "غير متزامن")
 
     // Playback State
     var playbackState by mutableStateOf(PlaybackState(
@@ -153,20 +165,137 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         refreshDownloadedSurahs()
     }
 
-    fun setLoginStatus(loggedIn: Boolean, name: String = "عبد الله") {
+    fun setLoginStatus(loggedIn: Boolean, name: String = "عبد الله", email: String = "", uid: String = "") {
         isUserLoggedIn = loggedIn
         userName = name
+        userEmail = email
+        userId = uid
+        val formattedTime = SimpleDateFormat("HH:mm yyyy-MM-dd", Locale.getDefault()).format(Date())
         prefs.edit().apply {
             putBoolean("user_logged_in", loggedIn)
             putString("user_name", name)
+            putString("user_email", email)
+            putString("user_id", uid)
             putString("user_title", if (loggedIn) "عابد مخلص" else "الباحث عن الطاعة")
             apply()
         }
         userTitle = if (loggedIn) "عابد مخلص" else "الباحث عن الطاعة"
         if (!loggedIn) {
             stopRecitation()
+            viewModelScope.launch {
+                FirebaseSyncManager.signOut(getApplication())
+            }
+        } else if (FirebaseSyncManager.isUserAuthenticated()) {
+            // Immediately sync or fetch achievements from cloud
+            syncOrFetchAchievements()
+        } else {
+            cloudSyncStatusMessage = "تم الحفظ محلياً على الجهاز 💾"
         }
         triggerHaptic()
+    }
+
+    fun syncOrFetchAchievements() {
+        if (!FirebaseSyncManager.isUserAuthenticated()) {
+            cloudSyncStatusMessage = "سجّل بحساب Google للمزامنة السحابية ☁️"
+            return
+        }
+        viewModelScope.launch {
+            isCloudSyncing = true
+            cloudSyncStatusMessage = "جاري مزامنة الإنجازات مع السحابة ☁️..."
+            try {
+                // Try fetching from Firestore first to see if user has existing cloud data
+                val cloudProfile = FirebaseSyncManager.fetchAchievementsFromCloud(getApplication())
+                if (cloudProfile != null) {
+                    // Restore achievements into Room
+                    val currentStreakObj = userStreak.value ?: StreakData()
+                    repository.saveCompleteStreakData(
+                        currentStreakObj.copy(
+                            points = cloudProfile.points,
+                            level = cloudProfile.level,
+                            currentStreak = cloudProfile.currentStreak,
+                            highestStreak = cloudProfile.highestStreak
+                        )
+                    )
+                    khatmaProgressPages = cloudProfile.khatmaProgressPages
+                    if (cloudProfile.displayName.isNotEmpty()) {
+                        userName = cloudProfile.displayName
+                        prefs.edit().putString("user_name", userName).apply()
+                    }
+                    if (cloudProfile.userTitle.isNotEmpty()) {
+                        userTitle = cloudProfile.userTitle
+                        prefs.edit().putString("user_title", userTitle).apply()
+                    }
+                    repository.restoreChallengesFromCloud(cloudProfile.completedChallenges)
+                    repository.restoreTasbihCountsFromCloud(cloudProfile.tasbihCounts)
+                    
+                    val timeStr = SimpleDateFormat("hh:mm a - yyyy/MM/dd", Locale("ar")).format(Date(cloudProfile.lastSyncTime))
+                    lastSyncTimeString = timeStr
+                    prefs.edit().putString("last_sync_time", timeStr).apply()
+                    cloudSyncStatusMessage = "تمت استعادة ومزامنة إنجازاتك بنجاح ✅"
+                } else {
+                    // Upload current Room achievements to Firestore
+                    uploadCurrentAchievementsToCloud()
+                }
+            } catch (e: Exception) {
+                Log.e("EmaniatViewModel", "Sync error", e)
+                cloudSyncStatusMessage = "تم الحفظ محلياً في قاعدة البيانات 💾"
+            } finally {
+                isCloudSyncing = false
+            }
+        }
+    }
+
+    fun manualSyncToCloud() {
+        if (!FirebaseSyncManager.isUserAuthenticated()) {
+            cloudSyncStatusMessage = "سجّل الدخول بحساب Google أولاً للمزامنة السحابية ☁️"
+            triggerHaptic()
+            return
+        }
+        viewModelScope.launch {
+            isCloudSyncing = true
+            cloudSyncStatusMessage = "جاري حفظ الإنجازات سحابياً..."
+            val success = uploadCurrentAchievementsToCloud()
+            isCloudSyncing = false
+            if (success) {
+                val timeStr = SimpleDateFormat("hh:mm a - yyyy/MM/dd", Locale("ar")).format(Date())
+                lastSyncTimeString = timeStr
+                prefs.edit().putString("last_sync_time", timeStr).apply()
+                cloudSyncStatusMessage = "تم حفظ جميع الإنجازات في السحابة بنجاح ☁️✨"
+            } else {
+                cloudSyncStatusMessage = "تم الحفظ محلياً في قاعدة البيانات بنجاح 💾"
+            }
+            triggerHaptic()
+        }
+    }
+
+    private suspend fun uploadCurrentAchievementsToCloud(): Boolean {
+        val currentUser = FirebaseSyncManager.getCurrentUser() ?: return false
+        val uid = currentUser.uid
+        val streak = userStreak.value ?: StreakData()
+        val challengesList = challenges.value
+        val completedChallenges = challengesList.filter { it.isCompleted }.map { it.id }
+        val tasbihList = tasbihItems.value
+        val tasbihCountsMap = tasbihList.associate { it.id to it.count }
+
+        val profile = UserCloudProfile(
+            uid = uid,
+            displayName = userName,
+            email = userEmail.ifEmpty { currentUser.email ?: "" },
+            userTitle = userTitle,
+            points = streak.points,
+            level = streak.level,
+            currentStreak = streak.currentStreak,
+            highestStreak = streak.highestStreak,
+            khatmaProgressPages = khatmaProgressPages,
+            completedChallenges = completedChallenges,
+            tasbihCounts = tasbihCountsMap,
+            lastSyncTime = System.currentTimeMillis()
+        )
+        return FirebaseSyncManager.syncAchievementsToCloud(getApplication(), profile)
+    }
+
+    fun logout() {
+        setLoginStatus(false, "عبد الله", "", "")
     }
 
     fun getReaderLabelFor(reciter: String): String {
@@ -199,7 +328,7 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
 
     fun setScreen(screen: AppScreen) {
         currentScreen = screen
-        if (screen == AppScreen.HOME) {
+        if (screen == AppScreen.HOME && aiState == "جاري ملامسة الروحانية...") {
             fetchAiSpiritualAdvice()
         }
     }

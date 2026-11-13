@@ -862,9 +862,9 @@ fun QuranScreen(
                                         viewModel.triggerHaptic()
                                     },
                                     text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Text("قراءة وتسميع 📖", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Text("السور والقراءة 📖", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                         }
                                     }
                                 )
@@ -875,9 +875,22 @@ fun QuranScreen(
                                         viewModel.triggerHaptic()
                                     },
                                     text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Icon(Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Text("أصوات الشيوخ 🎙️", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Text("خطة الختمة والورد 🗓️", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        }
+                                    }
+                                )
+                                Tab(
+                                    selected = activeSubTab == 2,
+                                    onClick = { 
+                                        activeSubTab = 2 
+                                        viewModel.triggerHaptic()
+                                    },
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Icon(Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Text("أصوات الشيوخ 🎙️", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                         }
                                     }
                                 )
@@ -1094,6 +1107,25 @@ fun QuranScreen(
                                             }
                                         }
                                     }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Button(
+                                        onClick = {
+                                            activeSubTab = 1
+                                            viewModel.triggerHaptic()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent.copy(alpha = 0.15f)),
+                                        border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.5f)),
+                                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("تخطيط موعد الختمة المخصصة وتنبيه الورد 🎯", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                 }
                             }
 
@@ -1255,8 +1287,21 @@ fun QuranScreen(
                                     }
                                 }
                             }
+                        } else if (activeSubTab == 1) {
+                            // TAB 1: CUSTOM KHATMA PLAN & DAILY WARD
+                            item {
+                                KhatmaPlanView(
+                                    viewModel = viewModel,
+                                    onNavigateToSurah = { surahId ->
+                                        val found = surahs.find { it.id == surahId }
+                                        if (found != null) {
+                                            selectedSurahForReading = found
+                                        }
+                                    }
+                                )
+                            }
                         } else {
-                            // TAB 1: SHEIKH AUDIOS & VOICE CONTROLLER
+                            // TAB 2: SHEIKH AUDIOS & VOICE CONTROLLER
                             item {
                                 Text(
                                     text = "اختر القارئ والشيخ للاستماع المباشر 🎙️",

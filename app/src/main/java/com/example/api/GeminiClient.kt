@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 
 @JsonClass(generateAdapter = true)
 data class InlineData(
@@ -91,18 +92,27 @@ object GeminiApiClient {
         val models = listOf(
             preferredModel,
             "gemini-2.5-flash",
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-3.5-flash"
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash"
         ).distinct()
-        
+
         var lastException: Exception? = null
         for (model in models) {
             try {
                 return service.generateContent(model, apiKey, request)
+            } catch (e: HttpException) {
+                lastException = e
+                if (e.code() == 401 || e.code() == 403) {
+                    android.util.Log.w(
+                        "GeminiApiClient",
+                        "Gemini API authorization error (HTTP ${e.code()}): check GEMINI_API_KEY permissions."
+                    )
+                    throw e
+                }
+                android.util.Log.w("GeminiApiClient", "Model $model failed: HTTP ${e.code()}. Trying next fallback...")
             } catch (e: Exception) {
                 lastException = e
-                android.util.Log.e("GeminiApiClient", "Model $model failed: ${e.message}. Trying next fallback...")
+                android.util.Log.w("GeminiApiClient", "Model $model failed: ${e.message}. Trying next fallback...")
             }
         }
         throw lastException ?: Exception("تعذر الاتصال بجميع قنوات الذكاء الاصطناعي")
@@ -131,10 +141,13 @@ object GeminiApiClient {
 
         try {
             val response = generateWithFallback(apiKey, request, "gemini-2.5-flash")
-            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text 
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 ?: getDefaultAdvice(timeOfDay)
+        } catch (e: HttpException) {
+            android.util.Log.w("GeminiApiClient", "Gemini spiritual advice unavailable (HTTP ${e.code()}), using local advice.")
+            getDefaultAdvice(timeOfDay)
         } catch (e: Exception) {
-            android.util.Log.e("GeminiApiClient", "spiritual advice error", e)
+            android.util.Log.w("GeminiApiClient", "Gemini spiritual advice unavailable (${e.message}), using local advice.")
             getDefaultAdvice(timeOfDay)
         }
     }
@@ -185,10 +198,16 @@ object GeminiApiClient {
 
         try {
             val response = generateWithFallback(apiKey, request, "gemini-2.5-flash")
-            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text 
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 ?: """{"score":0.0,"status":"حدث خطأ","feedback":"نعتذر، لم نتمكن من الحصول على رد من خادم الذكاء الاصطناعي."}"""
+        } catch (e: HttpException) {
+            val reason = if (e.code() == 401 || e.code() == 403) {
+                "مفتاح Gemini API غير مخوّل أو مقيد حالياً (HTTP ${e.code()}). يرجى التأكد من تفعيل Generative Language API في إعدادات المفاتيح."
+            } else {
+                "تعذر الاتصال بخادم الذكاء الاصطناعي (HTTP ${e.code()})."
+            }
+            """{"score":0.0,"status":"تعذر التقييم","feedback":"$reason"}"""
         } catch (e: Exception) {
-            e.printStackTrace()
             val errorMsg = e.localizedMessage ?: e.message ?: e.toString()
             """{"score":0.0,"status":"حدث خطأ","feedback":"نعتذر، لم نتمكن من الاتصال بالذكاء الاصطناعي حالياً. تفاصيل الخطأ الفني: $errorMsg"}"""
         }
@@ -240,10 +259,16 @@ object GeminiApiClient {
 
         try {
             val response = generateWithFallback(apiKey, request, "gemini-2.5-flash")
-            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text 
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 ?: """{"score":0.0,"status":"حدث خطأ","feedback":"نعتذر، لم نتمكن من الحصول على رد من خادم الذكاء الاصطناعي."}"""
+        } catch (e: HttpException) {
+            val reason = if (e.code() == 401 || e.code() == 403) {
+                "مفتاح Gemini API غير مخوّل أو مقيد حالياً (HTTP ${e.code()}). يرجى التأكد من تفعيل Generative Language API في إعدادات المفاتيح."
+            } else {
+                "تعذر الاتصال بخادم الذكاء الاصطناعي (HTTP ${e.code()})."
+            }
+            """{"score":0.0,"status":"تعذر التقييم","feedback":"$reason"}"""
         } catch (e: Exception) {
-            e.printStackTrace()
             val errorMsg = e.localizedMessage ?: e.message ?: e.toString()
             """{"score":0.0,"status":"حدث خطأ","feedback":"نعتذر، لم نتمكن من الاتصال بالذكاء الاصطناعي حالياً. تفاصيل الخطأ الفني: $errorMsg"}"""
         }

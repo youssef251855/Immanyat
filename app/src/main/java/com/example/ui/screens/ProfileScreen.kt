@@ -212,6 +212,14 @@ fun ProfileScreen(
                                                 }
                                             }
                                         }
+                                        if (viewModel.userEmail.isNotBlank()) {
+                                            Text(
+                                                text = viewModel.userEmail,
+                                                color = GoldAccent.copy(alpha = 0.8f),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                         Text(
                                             text = "مستوى التقى: " + when(level) {
                                                 in 1..2 -> "السائر الطيب ☘️"
@@ -223,21 +231,105 @@ fun ProfileScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        TextButton(
-                                            onClick = { editingName = true },
-                                            modifier = Modifier.height(28.dp).padding(0.dp)
-                                        ) {
-                                            Text("تعديل اسمك الشخصي ✍️", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        TextButton(
-                                            onClick = { viewModel.setLoginStatus(false) },
-                                            modifier = Modifier.height(28.dp).padding(0.dp)
-                                        ) {
-                                            Text("تسجيل خروج 🚪", color = MutedRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(
+                                                onClick = { editingName = true },
+                                                modifier = Modifier.height(28.dp).padding(0.dp)
+                                            ) {
+                                                Text("تعديل الاسم ✍️", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            TextButton(
+                                                onClick = { viewModel.setLoginStatus(false) },
+                                                modifier = Modifier.height(28.dp).padding(0.dp)
+                                            ) {
+                                                Text("تسجيل خروج 🚪", color = MutedRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // CLOUD SYNC & DATABASE BACKUP CARD
+                        GlassCard(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(EmeraldSecondary.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudDone,
+                                            contentDescription = "Cloud Sync",
+                                            tint = EmeraldSecondary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "المزامنة السحابية وقاعدة البيانات ☁️",
+                                            color = LightWhite,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = if (viewModel.lastSyncTimeString.isNotBlank()) "آخر مزامنة: ${viewModel.lastSyncTimeString}" else "الحفظ السحابي التلقائي مفعّل",
+                                            color = TextColorSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        viewModel.triggerHaptic()
+                                        viewModel.manualSyncToCloud()
+                                    },
+                                    enabled = !viewModel.isCloudSyncing,
+                                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    if (viewModel.isCloudSyncing) {
+                                        CircularProgressIndicator(
+                                            color = GoldAccent,
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Sync,
+                                                contentDescription = "Sync",
+                                                tint = LightWhite,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("مزامنة الآن", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (viewModel.cloudSyncStatusMessage != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = viewModel.cloudSyncStatusMessage ?: "",
+                                    color = GoldAccent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
 

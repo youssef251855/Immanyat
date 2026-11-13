@@ -1,20 +1,15 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Patterns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -22,24 +17,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.data.AuthHelper
+import com.example.data.AuthResult
 import com.example.ui.components.IslamicOrnamentDivider
-import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,62 +41,80 @@ fun LoginScreen(
     onLoginSuccess: () -> Unit
 ) {
     val context = LocalContext.current
-    var isSignUpMode by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
-    var emailInput by remember { mutableStateOf("") }
-    var nameInput by remember { mutableStateOf("") }
-    var passwordInput by remember { mutableStateOf("") }
-    var isPasswordVisible by remember { mutableStateOf(false) }
-    
-    var isLoading by remember { mutableStateOf(false) }
+    var isGoogleLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
     var showPermissionDialog by remember { mutableStateOf(false) }
     var tempLoggedInName by remember { mutableStateOf("") }
+    var tempLoggedInEmail by remember { mutableStateOf("") }
+    var tempLoggedInUid by remember { mutableStateOf("") }
 
     // Floating notification permission launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         showPermissionDialog = false
-        viewModel.setLoginStatus(true, tempLoggedInName.ifEmpty { "عبد الله" })
+        viewModel.setLoginStatus(
+            loggedIn = true,
+            name = tempLoggedInName.ifEmpty { "عبد الله" },
+            email = tempLoggedInEmail,
+            uid = tempLoggedInUid
+        )
         if (isGranted) {
             Toast.makeText(context, "تم تفعيل إشعارات الأذان وتذكيرات الذكر بنجاح ✨", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(context, "تم الدخول. يرجى تفعيل الإشعارات لاحقاً للحصول على تنبيهات الأذان بدقة", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "تم الدخول بنجاح ✨", Toast.LENGTH_SHORT).show()
         }
         onLoginSuccess()
     }
 
-    // Function to process login or signup
-    val handleAuth = {
-        if (emailInput.isEmpty() || passwordInput.isEmpty() || (isSignUpMode && nameInput.isEmpty())) {
-            Toast.makeText(context, "يرجى ملء جميع الحقول المطلوبة", Toast.LENGTH_SHORT).show()
-        } else if (!Patterns.EMAIL_ADDRESS.matcher(emailInput).matches()) {
-            Toast.makeText(context, "يرجى إدخال بريد إلكتروني صحيح", Toast.LENGTH_SHORT).show()
-        } else if (passwordInput.length < 6) {
-            Toast.makeText(context, "يجب أن تكون كلمة المرور 6 أحرف على الأقل", Toast.LENGTH_SHORT).show()
-        } else {
-            isLoading = true
-            // Simulate networking
-            val finalName = if (isSignUpMode) nameInput else emailInput.substringBefore("@")
-            tempLoggedInName = finalName
-            
-            // Wait 1.2 seconds and prompt for notification permission
-            android.os.Handler(context.mainLooper).postDelayed({
-                isLoading = false
-                // Check if permission is already granted
-                val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                } else {
-                    true
-                }
+    val finalizeLogin = { name: String, email: String, uid: String ->
+        tempLoggedInName = name
+        tempLoggedInEmail = email
+        tempLoggedInUid = uid
 
-                if (!hasPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    showPermissionDialog = true
-                } else {
-                    viewModel.setLoginStatus(true, finalName)
-                    onLoginSuccess()
+        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+
+        if (!hasPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            showPermissionDialog = true
+        } else {
+            viewModel.setLoginStatus(true, name, email, uid)
+            onLoginSuccess()
+        }
+    }
+
+    // Attempt silent auto sign-in on startup if already authorized
+    LaunchedEffect(Unit) {
+        val autoResult = AuthHelper.attemptAutoSignIn(context)
+        if (autoResult is AuthResult.Success) {
+            finalizeLogin(autoResult.displayName, autoResult.email, autoResult.user?.uid ?: "")
+        }
+    }
+
+    // Interactive Google Sign-In handling
+    val handleGoogleSignIn = {
+        errorMessage = null
+        isGoogleLoading = true
+        coroutineScope.launch {
+            val result = AuthHelper.signInWithGoogle(context)
+            isGoogleLoading = false
+            when (result) {
+                is AuthResult.Success -> {
+                    finalizeLogin(result.displayName, result.email, result.user?.uid ?: "")
                 }
-            }, 1200)
+                is AuthResult.Cancelled -> {
+                    errorMessage = "تم إلغاء تسجيل الدخول. يرجى اختيار حساب للمتابعة."
+                }
+                is AuthResult.Error -> {
+                    errorMessage = result.message
+                }
+            }
         }
     }
 
@@ -128,22 +139,22 @@ fun LoginScreen(
                 .verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.Center
         ) {
-            // Main Card container
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp)
+                    .widthIn(max = 520.dp)
+                    .padding(20.dp)
                     .shadow(16.dp, RoundedCornerShape(24.dp))
                     .clip(RoundedCornerShape(24.dp))
                     .background(SurfaceDarkGlass)
                     .border(1.dp, CardBorder, RoundedCornerShape(24.dp))
-                    .padding(vertical = 24.dp, horizontal = 20.dp),
+                    .padding(vertical = 28.dp, horizontal = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header decoration
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(80.dp)
                         .clip(CircleShape)
                         .background(EmeraldMuted.copy(alpha = 0.3f))
                         .border(1.5.dp, GoldAccent.copy(alpha = 0.6f), CircleShape),
@@ -151,247 +162,153 @@ fun LoginScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Mosque,
-                        contentDescription = "Mosque Icon",
+                        contentDescription = "شعار تطبيق إيمانيات",
                         tint = GoldAccent,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(40.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
                     text = "تطبيق إيمانيات",
                     color = GoldAccent,
-                    fontSize = 24.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
-                    text = "رفيقك المسلم في الطاعات والأذكار وأوقات الصلاة",
+                    text = "سجّل دخولك بحساب Google لحفظ إنجازاتك وختماتك وتسبيحاتك سحابياً ومزامنتها عبر أجهزتك ☁️",
                     color = TextColorSecondary,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    modifier = Modifier.padding(top = 6.dp, bottom = 14.dp)
                 )
 
                 IslamicOrnamentDivider(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(14.dp)
-                        .padding(bottom = 14.dp)
+                        .padding(bottom = 16.dp)
                 )
 
-                // Sub title tabs (sign in / sign up)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(DarkBackground.copy(alpha = 0.6f))
-                        .padding(4.dp)
-                ) {
+                // Error Message if any
+                if (errorMessage != null) {
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(if (!isSignUpMode) EmeraldPrimary else Color.Transparent)
-                            .clickable {
-                                isSignUpMode = false
-                                viewModel.triggerHaptic()
-                            }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
+                            .background(Color(0xFFFF6B6B).copy(alpha = 0.12f))
+                            .border(0.8.dp, Color(0xFFFF6B6B).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
                     ) {
                         Text(
-                            text = "تسجيل الدخول",
-                            color = if (!isSignUpMode) LightWhite else TextColorSecondary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isSignUpMode) EmeraldPrimary else Color.Transparent)
-                            .clickable {
-                                isSignUpMode = true
-                                viewModel.triggerHaptic()
-                            }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "إنشاء حساب",
-                            color = if (isSignUpMode) LightWhite else TextColorSecondary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            text = errorMessage ?: "",
+                            color = Color(0xFFFF8A8A),
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Name field (Sign up only)
-                AnimatedVisibility(
-                    visible = isSignUpMode,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column {
-                        OutlinedTextField(
-                            value = nameInput,
-                            onValueChange = { nameInput = it },
-                            label = { Text("الاسم الكريم", color = TextColorSecondary) },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = GoldAccent) },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = GoldAccent,
-                                unfocusedBorderColor = CardBorder,
-                                focusedTextColor = LightWhite,
-                                unfocusedTextColor = LightWhite,
-                                focusedContainerColor = DarkBackground.copy(alpha = 0.3f),
-                                unfocusedContainerColor = DarkBackground.copy(alpha = 0.3f)
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("register_name_input")
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-                    }
-                }
-
-                // Email field
-                OutlinedTextField(
-                    value = emailInput,
-                    onValueChange = { emailInput = it },
-                    label = { Text("البريد الإلكتروني", color = TextColorSecondary) },
-                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = GoldAccent) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GoldAccent,
-                        unfocusedBorderColor = CardBorder,
-                        focusedTextColor = LightWhite,
-                        unfocusedTextColor = LightWhite,
-                        focusedContainerColor = DarkBackground.copy(alpha = 0.3f),
-                        unfocusedContainerColor = DarkBackground.copy(alpha = 0.3f)
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("auth_email_input")
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Password field
-                OutlinedTextField(
-                    value = passwordInput,
-                    onValueChange = { passwordInput = it },
-                    label = { Text("كلمة المرور", color = TextColorSecondary) },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent) },
-                    trailingIcon = {
-                        IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                            Icon(
-                                imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = null,
-                                tint = GoldAccent
-                            )
-                        }
-                    },
-                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GoldAccent,
-                        unfocusedBorderColor = CardBorder,
-                        focusedTextColor = LightWhite,
-                        unfocusedTextColor = LightWhite,
-                        focusedContainerColor = DarkBackground.copy(alpha = 0.3f),
-                        unfocusedContainerColor = DarkBackground.copy(alpha = 0.3f)
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("auth_password_input")
-                )
-
-                Spacer(modifier = Modifier.height(22.dp))
-
-                // Action Buttons
+                // Google Sign In Button
                 Button(
                     onClick = {
                         viewModel.triggerHaptic()
-                        handleAuth()
+                        handleGoogleSignIn()
                     },
-                    enabled = !isLoading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = EmeraldPrimary,
-                        disabledContainerColor = EmeraldMuted
-                    ),
-                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isGoogleLoading,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("auth_action_button")
+                        .height(52.dp)
+                        .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                        .testTag("google_sign_in_button")
                 ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(color = GoldAccent, modifier = Modifier.size(24.dp))
+                    if (isGoogleLoading) {
+                        CircularProgressIndicator(color = EmeraldPrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
                     } else {
-                        Text(
-                            text = if (isSignUpMode) "حفظ وإنشاء الحساب ✨" else "دخول آمن 🔒",
-                            color = LightWhite,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountCircle,
+                                contentDescription = "Google",
+                                tint = Color(0xFF4285F4),
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "المتابعة بحساب Google",
+                                color = Color(0xFF1F1F1F),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Login as Guest
+                // Cloud benefits pill
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(DarkBackground.copy(alpha = 0.45f))
+                        .border(0.5.dp, CardBorder.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CloudDone, contentDescription = null, tint = EmeraldSecondary, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("نسخ احتياطي سحابي فوري للختمة والسبحة", color = LightWhite, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Security, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("مصادقة آمنة ومشفرة عبر حساب Google", color = LightWhite, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Local-only guest mode (no Firestore calls)
                 TextButton(
                     onClick = {
                         viewModel.triggerHaptic()
-                        val guestName = "مُحب الطاعة"
-                        tempLoggedInName = guestName
-                        
-                        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                        } else {
-                            true
-                        }
-
-                        if (!hasPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            showPermissionDialog = true
-                        } else {
-                            viewModel.setLoginStatus(true, guestName)
-                            onLoginSuccess()
-                        }
+                        finalizeLogin("مُحب الطاعة", "", "")
                     },
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("guest_local_button")
                 ) {
                     Text(
-                        text = "الدخول السريع كـ زائر 🌍",
-                        color = GoldAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        text = "المتابعة بدون حساب (حفظ محلي على الجهاز فقط)",
+                        color = TextColorSecondary,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 12.sp
                     )
                 }
             }
         }
     }
 
-    // Modern Islamic Permission Dialog explaining why POST_NOTIFICATIONS is needed for Adhan & Dhikr
+    // Permission Dialog
     if (showPermissionDialog) {
         AlertDialog(
             onDismissRequest = {
                 showPermissionDialog = false
-                viewModel.setLoginStatus(true, tempLoggedInName.ifEmpty { "عبد الله" })
+                viewModel.setLoginStatus(true, tempLoggedInName.ifEmpty { "عبد الله" }, tempLoggedInEmail, tempLoggedInUid)
                 onLoginSuccess()
             },
             containerColor = SurfaceDarkGlass,
@@ -425,7 +342,7 @@ fun LoginScreen(
             },
             text = {
                 Text(
-                    text = "يريد 'إيمانيات' إرسال إشعارات لتنبيهك بوقت الأذان لكل صلاة، وتذكيرك بأذكار الصباح والمساء بدقة عالية لتبقى روحانيتك وثيقة الصلة.",
+                    text = "يريد 'إيمانيات' إرسال إشعارات لتنبيهك بوقت الأذان لكل صلاة وتذكيرك بأذكار الصباح والمساء بدقة لتبقى روحانيتك وثيقة الصلة.",
                     color = TextColorSecondary,
                     fontSize = 13.sp,
                     lineHeight = 22.sp,
@@ -441,7 +358,7 @@ fun LoginScreen(
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         } else {
                             showPermissionDialog = false
-                            viewModel.setLoginStatus(true, tempLoggedInName)
+                            viewModel.setLoginStatus(true, tempLoggedInName, tempLoggedInEmail, tempLoggedInUid)
                             onLoginSuccess()
                         }
                     },
@@ -456,9 +373,8 @@ fun LoginScreen(
                     onClick = {
                         viewModel.triggerHaptic()
                         showPermissionDialog = false
-                        viewModel.setLoginStatus(true, tempLoggedInName.ifEmpty { "عبد الله" })
+                        viewModel.setLoginStatus(true, tempLoggedInName.ifEmpty { "عبد الله" }, tempLoggedInEmail, tempLoggedInUid)
                         onLoginSuccess()
-                        Toast.makeText(context, "يمكنك تفعيل الإشعارات لاحقاً دائماً من إعدادات الهاتف", Toast.LENGTH_LONG).show()
                     }
                 ) {
                     Text("تخطي الآن", color = TextColorSecondary)

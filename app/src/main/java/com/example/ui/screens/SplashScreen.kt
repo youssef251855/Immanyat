@@ -114,9 +114,7 @@ fun SplashScreen(
                 onSplashFinished()
             }
         } else {
-            // Null implies network failure, timeout, or invalid JSON. Proceed in Offline Mode.
-            alertMessage = "يتعذر الاتصال بالخادم للتحقق من التحديثات، جاري العمل بالوضع غير المتصل..."
-            delay(1500)
+            // Null implies no remote manifest (404) or offline mode. Proceed smoothly.
             onSplashFinished()
         }
     }

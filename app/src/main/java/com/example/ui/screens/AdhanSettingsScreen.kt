@@ -13,6 +13,7 @@ import android.os.Build
 import android.util.Log
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -53,6 +54,7 @@ import com.example.data.UpdateInfo
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
+import com.example.ui.viewmodel.AppScreen
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -210,6 +212,7 @@ fun AdhanSettingsScreen(
                                 fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
                                     if (loc != null) {
                                         AdhanManager.saveCoordinates(context, loc.latitude, loc.longitude, "تحديد تلقائي")
+                                        locationName = "تحديد تلقائي"
                                         prayerTimesList = AdhanManager.calculatePrayerTimesForDate(context, Date())
                                         AdhanManager.scheduleNextAlarm(context)
                                         Toast.makeText(context, "تم مزامنة إحداثيات موقعك الجغرافي بنجاح!", Toast.LENGTH_SHORT).show()
@@ -286,7 +289,10 @@ fun AdhanSettingsScreen(
                         viewModel = viewModel,
                         prayerTimesList = prayerTimesList,
                         locationName = locationName,
-                        onRefresh = { prayerTimesList = AdhanManager.calculatePrayerTimesForDate(context, Date()) }
+                        onRefresh = {
+                            locationName = AdhanManager.getSavedLocationName(context)
+                            prayerTimesList = AdhanManager.calculatePrayerTimesForDate(context, Date())
+                        }
                     )
                     1 -> CompassAndMosquesTab(context = context, viewModel = viewModel)
                     2 -> SmartSettingsTab(context = context, viewModel = viewModel, onRefresh = {
@@ -360,6 +366,33 @@ fun TimesAndAudioTab(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Button(
+                    onClick = {
+                        viewModel.setScreen(AppScreen.QIBLA)
+                        viewModel.triggerHaptic()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldSecondary.copy(alpha = 0.25f)),
+                    border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Explore,
+                        contentDescription = "بوصلة القبلة",
+                        tint = GoldAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "فتح بوصلة القبلة التفاعلية ثلاثية الأبعاد 🕋",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
@@ -1232,6 +1265,225 @@ fun SmartSettingsTab(
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = LightWhite, checkedTrackColor = EmeraldSecondary)
                     )
+                }
+            }
+        }
+
+        // --- Adhan Live Status & Diagnostic Testing ---
+        item {
+            val nextPair = AdhanManager.getNextPrayer(context, 0L)
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderColor = GoldAccent.copy(alpha = 0.5f)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.AlarmOn, contentDescription = null, tint = EmeraldSecondary, modifier = Modifier.size(22.dp))
+                            Text(
+                                text = "حالة منبه الأذان المجدول ⏰",
+                                color = GoldAccent,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(EmeraldSecondary.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text("نشط ومضبوط 🟢", color = EmeraldSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    if (nextPair != null) {
+                        val p = nextPair.first
+                        val minsLeft = nextPair.second / (1000 * 60)
+                        val hoursLeft = minsLeft / 60
+                        val remMins = minsLeft % 60
+                        val timeStr = if (hoursLeft > 0) "$hoursLeft ساعة و $remMins دقيقة" else "$remMins دقيقة"
+                        
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceDarkGlass)
+                                .border(0.5.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .padding(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("الأذان القادم: صلاة ${p.arabicName}", color = LightWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text("الموعد: ${p.formattedTime} (متبقي $timeStr)", color = TextColorSecondary, fontSize = 11.sp)
+                                }
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldSecondary, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+
+                    val alarmMgr = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+                    val canExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        alarmMgr?.canScheduleExactAlarms() ?: true
+                    } else true
+                    val notifMgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        notifMgr?.canUseFullScreenIntent() ?: true
+                    } else true
+
+                    if (!canExactAlarm || !canFullScreen) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFFFB74D).copy(alpha = 0.12f))
+                                .border(0.8.dp, Color(0xFFFFB74D).copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "تنبيه صلاحيات التشغيل التلقائي للأذان ⚠️",
+                                color = Color(0xFFFFB74D),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (!canExactAlarm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            context.startActivity(
+                                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                                    data = Uri.parse("package:${context.packageName}")
+                                                }
+                                            )
+                                        } catch (_: Exception) {}
+                                    },
+                                    border = BorderStroke(0.8.dp, Color(0xFFFFB74D)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("تفعيل المنبهات الدقيقة للأذان", color = LightWhite, fontSize = 11.sp)
+                                }
+                            }
+                            if (!canFullScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            context.startActivity(
+                                                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                    data = Uri.parse("package:${context.packageName}")
+                                                }
+                                            )
+                                        } catch (_: Exception) {}
+                                    },
+                                    border = BorderStroke(0.8.dp, Color(0xFFFFB74D)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("السماح بظهور شاشة الأذان على شاشة القفل", color = LightWhite, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "نظام الأذان يعمل الآن عبر منبه النظام الدقيق (AlarmClock) لإيقاظ الهاتف حتى في وضع السكون وقفل الشاشة.",
+                        color = TextColorSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Action buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                com.example.service.AdhanPlayerService.startAthan(context, "Asr", "العصر (تجربة)")
+                                viewModel.setScreen(AppScreen.ADHAN_ALARM)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GoldMuted.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Icon(Icons.Default.VolumeUp, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تجربة صوت الأذان 🔊", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                AdhanManager.scheduleTestAlarm(context, 10)
+                                Toast.makeText(context, "تم ضبط منبه الأذان بعد 10 ثوانٍ! أغلق شاشة هاتفك الآن لتجربة الاستيقاظ 🔔", Toast.LENGTH_LONG).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldSecondary.copy(alpha = 0.3f)),
+                            border = BorderStroke(1.dp, EmeraldSecondary.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Icon(Icons.Default.HourglassTop, contentDescription = null, tint = LightWhite, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تجربة بعد 10 ثوانٍ ⏱️", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                AdhanManager.scheduleNextAlarm(context)
+                                Toast.makeText(context, "تمت إعادة جدولة وتثبيت منبه الأذان بنجاح 🕌", Toast.LENGTH_SHORT).show()
+                                onRefresh()
+                            },
+                            border = BorderStroke(0.8.dp, CardBorder),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(36.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = TextColorSecondary, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("إعادة تثبيت المنبه 🔄", color = LightWhite, fontSize = 10.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                com.example.widget.WidgetUpdateHelper.updateAllWidgets(context)
+                                Toast.makeText(context, "تم تحديث جميع الودجات بنجاح ✨", Toast.LENGTH_SHORT).show()
+                            },
+                            border = BorderStroke(0.8.dp, CardBorder),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(36.dp)
+                        ) {
+                            Icon(Icons.Default.Widgets, contentDescription = null, tint = TextColorSecondary, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تحديث الودجات 📱", color = LightWhite, fontSize = 10.sp)
+                        }
+                    }
                 }
             }
         }

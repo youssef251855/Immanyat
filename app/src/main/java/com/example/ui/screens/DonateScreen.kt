@@ -420,46 +420,15 @@ fun VipGoldTab(viewModel: EmaniatViewModel) {
                                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier
-                                    .weight(1f)
+                                    .fillMaxWidth()
                                     .height(44.dp)
                             ) {
+                                Icon(Icons.Default.CreditCard, contentDescription = null, tint = LightWhite, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "الدفع بالبطاقة 💳",
+                                    text = "الدفع بالبطاقة البنكية / Google Play 💳",
                                     color = LightWhite,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            // FREE SPONSOR AD TRIGGER
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.triggerHaptic()
-                                    try {
-                                        val adUrl = "https://www.effectivecpmnetwork.com/wykven1z2g?key=8354f640db8eebe8bf7568da45909e36"
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(adUrl))
-                                        context.startActivity(intent)
-
-                                        val newCount = clickCount + 1
-                                        clickCount = newCount
-                                        saveDonationClicks(context, newCount)
-
-                                        viewModel.setVipPremiumStatus(true)
-                                        Toast.makeText(context, "جزاك الله خيراً! لزيارتكم إعلان الرعاية، تم تفعيل خطة Pro مجاناً بالكامل مؤقتاً! 🎉", Toast.LENGTH_LONG).show()
-                                    } catch (e: Exception) {
-                                        Toast.makeText(context, "حدث خطأ أثناء الاتصال بالخادم.", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldAccent),
-                                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .weight(1.2f)
-                                    .height(44.dp)
-                            ) {
-                                Text(
-                                    text = "تفعيل بزيارة إعلان دعم 🔓",
-                                    fontSize = 9.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }

@@ -7,4 +7,16 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- Emaniat Islamic Theme Colors for Widgets -->
+    <color name="widget_bg_dark">#FF0C1713</color>
+    <color name="widget_card_surface">#FF13231D</color>
+    <color name="widget_card_surface_light">#FF1A3028</color>
+    <color name="widget_emerald_primary">#FF1F6E50</color>
+    <color name="widget_emerald_accent">#FF2ECC71</color>
+    <color name="widget_gold_accent">#FFD4AF37</color>
+    <color name="widget_gold_light">#FFF6E08B</color>
+    <color name="widget_text_primary">#FFF1F5F3</color>
+    <color name="widget_text_secondary">#FFA3B8B0</color>
+    <color name="widget_border">#FF2A4A3E</color>
 </resources>

@@ -34,6 +34,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.AdhanManager
+import com.example.data.PrayerTimeInfo
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AppScreen
@@ -65,13 +67,20 @@ fun HomeScreen(
         showUpdatesDialog = false
     }
     
-    // Update real-time clock smoothly
+    var prayerTimes by remember { mutableStateOf(AdhanManager.calculatePrayerTimesForDate(context, Date())) }
+    var nextPrayerPair by remember { mutableStateOf(AdhanManager.getNextPrayer(context, 0L)) }
+    var locationName by remember { mutableStateOf(AdhanManager.getSavedLocationName(context)) }
+
+    // Update real-time clock, prayer times, and live next-prayer countdown every second
     LaunchedEffect(Unit) {
         while (true) {
-            val date = Date()
+            val now = Date()
             val formatStr = if (DateFormat.is24HourFormat(context)) "HH:mm" else "hh:mm a"
-            currentTime = SimpleDateFormat(formatStr, Locale.US).format(date)
-            kotlinx.coroutines.delay(30000)
+            currentTime = SimpleDateFormat(formatStr, Locale.US).format(now)
+            prayerTimes = AdhanManager.calculatePrayerTimesForDate(context, now)
+            nextPrayerPair = AdhanManager.getNextPrayer(context, 0L)
+            locationName = AdhanManager.getSavedLocationName(context)
+            kotlinx.coroutines.delay(1000)
         }
     }
 
@@ -104,20 +113,16 @@ fun HomeScreen(
     val verseToday = defaultVerses[dayOfYear % defaultVerses.size]
     val hadithToday = defaultHadiths[dayOfYear % defaultHadiths.size]
 
-    // Pre-calculated prayer times for 2026 spiritual calendar representation (Mecca Offset)
-    val prayerTimes = listOf(
-        "الفجر" to "04:12 AM" to true,
-        "الشروق" to "05:38 AM" to false,
-        "الظهر" to "12:22 PM" to true,
-        "العصر" to "03:48 PM" to true,
-        "المغرب" to "07:05 PM" to true,
-        "العشاء" to "08:35 PM" to true
-    )
-
-    // Determine next prayer
-    val nextPrayerName = "المغرب"
-    val nextPrayerTime = "07:05 PM"
-    val nextPrayerCountdown = "01:24:10"
+    // Dynamic next prayer and countdown
+    val nextPrayerInfo = nextPrayerPair?.first
+    val nextPrayerName = nextPrayerInfo?.arabicName ?: "الفجر"
+    val nextPrayerTime = nextPrayerInfo?.formattedTime ?: "--:--"
+    val remainingMillis = (nextPrayerPair?.second ?: 0L).coerceAtLeast(0L)
+    val totalSecs = remainingMillis / 1000L
+    val remHours = totalSecs / 3600L
+    val remMins = (totalSecs % 3600L) / 60L
+    val remSecs = totalSecs % 60L
+    val nextPrayerCountdown = String.format(Locale.US, "%02d:%02d:%02d", remHours, remMins, remSecs)
 
     Box(modifier = modifier.fillMaxSize()) {
         ElegantBackgroundPattern()
@@ -711,10 +716,14 @@ fun HomeScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "بتوقيت مكة المكرمة",
+                            text = "بتوقيت $locationName 📍",
                             color = EmeraldSecondary,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable {
+                                viewModel.triggerHaptic()
+                                viewModel.setScreen(AppScreen.ADHAN_SETTINGS)
+                            }
                         )
                     }
                 }
@@ -729,10 +738,8 @@ fun HomeScreen(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    prayerTimes.forEach { entry ->
-                        val (pNameTime, isObligatory) = entry
-                        val (name, time) = pNameTime
-                        val isHighlighted = name == nextPrayerName
+                    prayerTimes.forEach { prayer ->
+                        val isHighlighted = prayer.arabicName == nextPrayerName && prayer.name != "Sunrise"
 
                         Box(
                             modifier = Modifier
@@ -752,15 +759,15 @@ fun HomeScreen(
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = name,
+                                    text = prayer.arabicName,
                                     color = if (isHighlighted) GoldAccent else LightWhite,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = time,
-                                    color = TextColorSecondary,
+                                    text = prayer.formattedTime,
+                                    color = if (isHighlighted) LightWhite else TextColorSecondary,
                                     fontSize = 11.sp
                                 )
                             }
@@ -771,31 +778,66 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(14.dp))
                 
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(EmeraldSecondary.copy(alpha = 0.12f))
-                        .clickable { 
-                            viewModel.setScreen(AppScreen.ADHAN_SETTINGS)
-                            viewModel.triggerHaptic()
-                        }
-                        .padding(vertical = 10.dp, horizontal = 14.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "ضبط الأذان ومواقيت الصلاة والقبلة",
-                        tint = GoldAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "ضبط الأذان ومواقيت الصلاة والقبلة ⚙️",
-                        color = GoldAccent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(EmeraldSecondary.copy(alpha = 0.18f))
+                            .border(1.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                            .clickable { 
+                                viewModel.setScreen(AppScreen.QIBLA)
+                                viewModel.triggerHaptic()
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Explore,
+                            contentDescription = "بوصلة القبلة",
+                            tint = GoldAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "بوصلة القبلة 🕋",
+                            color = GoldAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(EmeraldSecondary.copy(alpha = 0.12f))
+                            .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                            .clickable { 
+                                viewModel.setScreen(AppScreen.ADHAN_SETTINGS)
+                                viewModel.triggerHaptic()
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "ضبط الأذان",
+                            tint = GoldAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "ضبط الأذان ⚙️",
+                            color = GoldAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -874,7 +916,7 @@ fun HomeScreen(
                     modifier = Modifier.align(Alignment.End)
                 ) {
                     Text(
-                        text = "مدعوم بنموذج Gemini 3.5",
+                        text = "مدعوم بنموذج Gemini 2.5",
                         color = TextColorSecondary.copy(alpha = 0.7f),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
@@ -1075,9 +1117,7 @@ fun HomeScreen(
             )
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 80.dp), // make space for bottom player and nav bars
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 listOf(
@@ -1109,6 +1149,60 @@ fun HomeScreen(
                             Text(
                                 text = title,
                                 color = LightWhite,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // NEW TOOLS ROW: Qibla & Zakat
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 80.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf(
+                    Triple("بوصلة القبلة 🕋", Icons.Default.Explore, AppScreen.QIBLA),
+                    Triple("حاسبة الزكاة 💰", Icons.Default.MonetizationOn, AppScreen.ZAKAT),
+                    Triple("واحة الإيمان ✨", Icons.Default.Star, AppScreen.OASIS)
+                ).forEach { grid ->
+                    val (title, icon, screen) = grid
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(EmeraldSecondary.copy(alpha = 0.18f), EmeraldMuted.copy(alpha = 0.1f))
+                                )
+                            )
+                            .border(1.dp, GoldAccent.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                viewModel.setScreen(screen)
+                                viewModel.triggerHaptic()
+                            }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = title,
+                                tint = GoldAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = title,
+                                color = GoldAccent,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )

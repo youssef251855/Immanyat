@@ -6,60 +6,126 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Build
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.AdhanAlarmActivity
 import com.example.MainActivity
+import com.example.R
 import com.example.data.AdhanManager
-import java.io.File
 import java.util.Calendar
 
+object AdhanWakeLockHolder {
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    @Synchronized
+    fun acquire(context: Context) {
+        try {
+            if (wakeLock == null) {
+                val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Emaniat:AdhanWakeLockHolder")
+                wakeLock?.setReferenceCounted(false)
+            }
+            wakeLock?.acquire(3 * 60 * 1000L) // 3 minutes timeout to keep CPU alive during handoff
+        } catch (e: Exception) {
+            Log.e("AdhanWakeLockHolder", "Failed acquiring wakeLock", e)
+        }
+    }
+
+    @Synchronized
+    fun release() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.e("AdhanWakeLockHolder", "Failed releasing wakeLock", e)
+        }
+    }
+}
+
 class AdhanAlarmReceiver : BroadcastReceiver() {
+
+    companion object {
+        @Volatile
+        private var fallbackPlayer: MediaPlayer? = null
+
+        @Synchronized
+        fun stopFallbackAudio() {
+            try {
+                fallbackPlayer?.let {
+                    if (it.isPlaying) it.stop()
+                    it.release()
+                }
+            } catch (_: Throwable) {
+            }
+            fallbackPlayer = null
+            AdhanPlayerService.isAthanPlaying.value = false
+            AdhanPlayerService.isIqamahPlaying.value = false
+            AdhanWakeLockHolder.release()
+        }
+    }
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action
         Log.d("AdhanAlarmReceiver", "Received broadcast action: $action")
 
-        if (action == Intent.ACTION_BOOT_COMPLETED || 
-            action == "android.intent.action.LOCKED_BOOT_COMPLETED" || 
-            action == Intent.ACTION_TIME_CHANGED || 
+        if (action == Intent.ACTION_BOOT_COMPLETED ||
+            action == "android.intent.action.LOCKED_BOOT_COMPLETED" ||
+            action == Intent.ACTION_TIME_CHANGED ||
             action == Intent.ACTION_TIMEZONE_CHANGED) {
-            
+
             // Reschedule upcoming alarm cleanly
             AdhanManager.scheduleNextAlarm(context)
             return
         }
 
         if (action == "com.example.ACTION_TRIGGER_ATHAN") {
+            // Keep CPU awake while starting service or playing sound
+            AdhanWakeLockHolder.acquire(context)
+
             val prayerName = intent.getStringExtra("PRAYER_NAME") ?: "Fajr"
             val prayerArabic = intent.getStringExtra("PRAYER_ARABIC") ?: "الفجر"
             val isPreAlert = intent.getBooleanExtra("IS_PRE_ALERT", false)
+            val isTest = intent.getBooleanExtra("IS_TEST", false)
 
             if (isPreAlert) {
                 // Raise Pre-Adhan early notification (e.g. 10 mins before)
                 val preMins = intent.getIntExtra("PRE_ALERT_MINUTES", 10)
                 showPreAdhanNotification(context, prayerArabic, preMins)
+                AdhanWakeLockHolder.release()
             } else {
-                // Check if silent during sleep is set
-                if (AdhanManager.isSilentDuringSleep(context)) {
+                // Check if silent during sleep is set (only if not a test trigger)
+                if (!isTest && AdhanManager.isSilentDuringSleep(context)) {
                     val cal = Calendar.getInstance()
                     val hour = cal.get(Calendar.HOUR_OF_DAY)
-                    if (hour in 23..4 || hour in 0..4) { // Quiet hours between 11 PM and 5 AM
+                    if (hour >= 23 || hour < 5) { // Quiet hours between 11 PM and 5 AM
                         Log.d("AdhanAlarmReceiver", "Skipping Adhan sound during sleep hours (11PM-5AM)")
                         showSilentNotification(context, prayerArabic)
                         AdhanManager.scheduleNextAlarm(context)
+                        AdhanWakeLockHolder.release()
                         return
                     }
                 }
 
-                // Launch Foreground Service to play full sound and build notification actions
+                if (!isTest) {
+                    AdhanManager.markPrayerTriggeredToday(context, prayerName)
+                }
+
+                // Launch Foreground Service to play full sound and open AdhanAlarmActivity
                 startPlayerService(context, prayerName, prayerArabic)
             }
 
             // Immediately schedule the NEXT prayer alarm to chain executions permanently
-            AdhanManager.scheduleNextAlarm(context)
+            if (!isTest) {
+                AdhanManager.scheduleNextAlarm(context)
+            }
         }
     }
 
@@ -76,8 +142,103 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
                 context.startService(serviceIntent)
             }
         } catch (e: Exception) {
-            Log.e("AdhanAlarmReceiver", "Failed starting player service directly. Attempting custom action", e)
+            Log.e("AdhanAlarmReceiver", "Failed starting player service directly. Attempting direct fallback", e)
+            playDirectFallbackAdhan(context, name, arabic)
         }
+    }
+
+    private fun playDirectFallbackAdhan(context: Context, name: String, arabic: String) {
+        // Fallback for strict devices that restrict background services:
+        // Play local R.raw.adhan directly and show high-priority Full-Screen Alarm notification + launch activity!
+        AdhanPlayerService.currentAthanPrayer.value = name
+        AdhanPlayerService.currentAthanArabic.value = arabic
+        AdhanPlayerService.isAthanPlaying.value = true
+        AdhanPlayerService.isIqamahPlaying.value = false
+
+        try {
+            stopFallbackAudio()
+            AdhanPlayerService.isAthanPlaying.value = true
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            val minAudible = (maxVol * 0.7).toInt().coerceAtLeast(1)
+            if (currentVol < minAudible && maxVol > 0) {
+                try {
+                    audioManager.setStreamVolume(AudioManager.STREAM_ALARM, minAudible, 0)
+                } catch (_: Throwable) {}
+            }
+
+            val player = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                context.resources.openRawResourceFd(R.raw.adhan).use { afd ->
+                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    prepare()
+                }
+                val vol = AdhanManager.getAthanVolume(context).coerceIn(0.4f, 1.0f)
+                setVolume(vol, vol)
+                start()
+                setOnCompletionListener {
+                    stopFallbackAudio()
+                }
+            }
+            fallbackPlayer = player
+        } catch (t: Throwable) {
+            Log.e("AdhanAlarmReceiver", "Direct fallback audio failed", t)
+            AdhanPlayerService.isAthanPlaying.value = false
+            AdhanWakeLockHolder.release()
+        }
+
+        // Show Full Screen Alarm Notification
+        val channelId = "emaniat_athan_alarm_chan_v2"
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val chan = NotificationChannel(
+                channelId,
+                "الأذان ومواقيت الصلاة",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                setSound(null, null)
+                enableVibration(true)
+            }
+            notificationManager.createNotificationChannel(chan)
+        }
+
+        val launchIntent = Intent(context, AdhanAlarmActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("OPEN_ATHAN_SCREEN", true)
+            putExtra("PRAYER_ARABIC", arabic)
+        }
+        try {
+            context.startActivity(launchIntent)
+        } catch (_: Throwable) {}
+
+        val pIntent = PendingIntent.getActivity(
+            context,
+            501,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle("حان الآن موعد صلاة $arabic 🕌")
+            .setContentText("صوت الحق يرتفع الآن - اضغط لفتح شاشة الأذان")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setFullScreenIntent(pIntent, true)
+            .setContentIntent(pIntent)
+
+        notificationManager.notify(12345, builder.build())
     }
 
     private fun showPreAdhanNotification(context: Context, prayerArabic: String, minutes: Int) {

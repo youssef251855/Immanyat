@@ -50,29 +50,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Initialize Start.io Ads SDK
-        try {
-            val sharedPrefs = getSharedPreferences("emaniat_prefs", MODE_PRIVATE)
-            val customAppId = sharedPrefs.getString("startio_app_id", "") ?: ""
-            val appIdToUse = if (customAppId.isNotBlank()) customAppId else {
-                try {
-                    val buildConfigId = BuildConfig.STARTIO_APP_ID
-                    if (buildConfigId.isNotBlank() && buildConfigId != "STARTIO_APP_ID") buildConfigId else "200676644"
-                } catch (e: Exception) {
-                    "200676644"
-                }
-            }
-            val initCtx = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                createAttributionContext("EmaniatLocation")
-            } else {
-                this
-            }
-            com.startapp.sdk.adsbase.StartAppSDK.init(initCtx, appIdToUse, false)
-            com.startapp.sdk.adsbase.StartAppSDK.enableReturnAds(false)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        
         // Immediate schedule of the background Adhan Alarm in background thread
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -90,14 +67,72 @@ class MainActivity : ComponentActivity() {
                 val isIqamahPlaying by com.example.service.AdhanPlayerService.isIqamahPlaying.collectAsState()
                 val currentAthanArabic by com.example.service.AdhanPlayerService.currentAthanArabic.collectAsState()
 
+                // Request Notification Permission on Android 13+ (API 33+)
+                val notifPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (isGranted) {
+                        com.example.data.AdhanManager.scheduleNextAlarm(context)
+                    }
+                }
+
+                LaunchedEffect(Unit) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.POST_NOTIFICATIONS
+                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+
+                // Foreground exact-second prayer watcher as an immediate backup alongside AlarmManager
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        try {
+                            val now = System.currentTimeMillis()
+                            val prayers = com.example.data.AdhanManager.calculatePrayerTimesForDate(context, java.util.Date(now))
+                            val matchingPrayer = prayers.firstOrNull { p ->
+                                p.name != "Sunrise" &&
+                                    p.isEnabled &&
+                                    now >= p.timeMillis &&
+                                    (now - p.timeMillis) <= 45_000L &&
+                                    !com.example.data.AdhanManager.wasPrayerTriggeredToday(context, p.name)
+                            }
+                            if (matchingPrayer != null &&
+                                !com.example.service.AdhanPlayerService.isAthanPlaying.value &&
+                                !com.example.service.AdhanPlayerService.isIqamahPlaying.value
+                            ) {
+                                val cal = java.util.Calendar.getInstance()
+                                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+                                val quietSleep = com.example.data.AdhanManager.isSilentDuringSleep(context) && (hour >= 23 || hour < 5)
+                                com.example.data.AdhanManager.markPrayerTriggeredToday(context, matchingPrayer.name)
+                                if (!quietSleep) {
+                                    com.example.service.AdhanPlayerService.startAthan(
+                                        context,
+                                        matchingPrayer.name,
+                                        matchingPrayer.arabicName
+                                    )
+                                }
+                                com.example.data.AdhanManager.scheduleNextAlarm(context)
+                            }
+                        } catch (_: Throwable) {}
+                        delay(1000L)
+                    }
+                }
+
                 var isSplashFinished by remember { mutableStateOf(false) }
 
                 if (isAthanPlaying || isIqamahPlaying) {
                     com.example.ui.screens.AdhanAlarmScreen(
-                        prayerArabic = currentAthanArabic,
+                        prayerArabic = currentAthanArabic.ifBlank { "الصلاة" },
                         isIqamah = isIqamahPlaying,
+                        locationName = com.example.data.AdhanManager.getSavedLocationName(context),
                         onStopClick = {
                             com.example.service.AdhanPlayerService.stopAthan(context)
+                            com.example.service.AdhanAlarmReceiver.stopFallbackAudio()
                         }
                     )
                 } else if (!isSplashFinished) {
@@ -110,6 +145,22 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.example.data.AdhanManager.scheduleNextAlarm(this@MainActivity)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
 }
 
 @Composable
@@ -119,50 +170,6 @@ fun EmaniatApp(
     val currentScreen = viewModel.currentScreen
     val playingState = viewModel.playbackState
     val context = LocalContext.current
-    var showAdsterraDialog by remember { mutableStateOf(false) }
-    var isFirstRun by remember { mutableStateOf(true) }
-
-    LaunchedEffect(currentScreen) {
-        if (isFirstRun) {
-            isFirstRun = false
-        } else {
-            // Respecting "Ethical Monetization": absolutely NO pop-up ads when entering prayer pages, the Quran pages, or Home/Tasbih
-            val isHolyOrPrayerPage = currentScreen == AppScreen.QURAN || 
-                    currentScreen == AppScreen.ADHAN_SETTINGS || 
-                    currentScreen == AppScreen.HOME || 
-                    currentScreen == AppScreen.TASBIH
-            if (!viewModel.isVipPremiumActive && !isHolyOrPrayerPage) {
-                showAdsterraDialog = true
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(5 * 60 * 1000L) // 5 minutes
-            try {
-                if (!viewModel.isVipPremiumActive) {
-                    com.startapp.sdk.adsbase.StartAppAd.showAd(context)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(10 * 60 * 1000L) // every 10 minutes
-            val activeScreen = viewModel.currentScreen
-            val isHolyOrPrayerPage = activeScreen == AppScreen.QURAN || 
-                    activeScreen == AppScreen.ADHAN_SETTINGS || 
-                    activeScreen == AppScreen.HOME || 
-                    activeScreen == AppScreen.TASBIH
-            if (!viewModel.isVipPremiumActive && !isHolyOrPrayerPage) {
-                showAdsterraDialog = true
-            }
-        }
-    }
 
     // Tab selects inside Azkar tab (Azkar vs Duas)
     var azkarSubTabIsDuas by remember { mutableStateOf(false) }
@@ -265,15 +272,6 @@ fun EmaniatApp(
                     .background(Color.Transparent)
                     .navigationBarsPadding()
             ) {
-                if (!viewModel.isVipPremiumActive && (currentScreen == AppScreen.HOME || currentScreen == AppScreen.QURAN || currentScreen == AppScreen.LIBRARY || currentScreen == AppScreen.VIDEOS)) {
-                    androidx.compose.ui.viewinterop.AndroidView(
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        factory = { ctx ->
-                            com.startapp.sdk.ads.banner.Banner(ctx)
-                        }
-                    )
-                }
-
                 // BOTTOM NAVIGATION BAR TABS
                 Box(
                     modifier = Modifier
@@ -446,134 +444,26 @@ fun EmaniatApp(
                         onClose = { viewModel.setScreen(AppScreen.HOME) }
                     )
                 }
+                AppScreen.ADHAN_ALARM -> {
+                    val currentArabic by com.example.service.AdhanPlayerService.currentAthanArabic.collectAsState()
+                    com.example.ui.screens.AdhanAlarmScreen(
+                        prayerArabic = currentArabic.ifBlank { "العصر" },
+                        isIqamah = false,
+                        locationName = com.example.data.AdhanManager.getSavedLocationName(context),
+                        onStopClick = {
+                            com.example.service.AdhanPlayerService.stopAthan(context)
+                            com.example.service.AdhanAlarmReceiver.stopFallbackAudio()
+                            viewModel.setScreen(AppScreen.HOME)
+                        }
+                    )
+                }
                 AppScreen.OASIS -> OasisScreen(viewModel = viewModel)
                 AppScreen.LIBRARY -> LibraryScreen(viewModel = viewModel)
                 AppScreen.VIDEOS -> VideosScreen(viewModel = viewModel)
                 AppScreen.DONATE -> DonateScreen(viewModel = viewModel)
+                AppScreen.QIBLA -> QiblaCompassScreen(viewModel = viewModel)
+                AppScreen.ZAKAT -> ZakatCalculatorScreen(viewModel = viewModel)
                 else -> HomeScreen(viewModel = viewModel)
-            }
-
-            // Beautiful Adsterra Sponsor Promo Dialog (forced support)
-            if (showAdsterraDialog) {
-                androidx.compose.ui.window.Dialog(
-                    onDismissRequest = { showAdsterraDialog = false },
-                    properties = androidx.compose.ui.window.DialogProperties(
-                        dismissOnBackPress = true,
-                        dismissOnClickOutside = true
-                    )
-                ) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 24.dp)
-                            .shadow(24.dp, shape = RoundedCornerShape(20.dp))
-                            .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(20.dp)),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceDarkGlass)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Top Star Icon
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(EmeraldSecondary.copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = "دعم التطبيق",
-                                    tint = GoldAccent,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Text(
-                                text = "دعم تطبيق إيمانيات 🕌",
-                                color = GoldAccent,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                textAlign = TextAlign.Center
-                            )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Text(
-                                text = "مساهمتك البسيطة تمنحنا فرصة للاستمرار ونشر التطبيق على متجر Google Play وخدمة ملايين المسلمين.",
-                                color = TextColorPrimary,
-                                fontSize = 14.sp,
-                                lineHeight = 22.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = "اضغط على زر عرض الإعلان أدناه للمساعدة والدعم السريع، جزاكم الله خيراً وجعلها في ميزان حسناتكم.",
-                                color = TextColorSecondary,
-                                fontSize = 12.sp,
-                                lineHeight = 18.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            Button(
-                                onClick = {
-                                    try {
-                                        val adUrl = "https://www.effectivecpmnetwork.com/wykven1z2g?key=8354f640db8eebe8bf7568da45909e36"
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(adUrl))
-                                        context.startActivity(intent)
-                                        showAdsterraDialog = false
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                                    .shadow(4.dp, RoundedCornerShape(12.dp))
-                            ) {
-                                Text(
-                                    text = "اضغط هنا لمشاهدة الإعلان ومساعدتنا 🚀",
-                                    color = LightWhite,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            OutlinedButton(
-                                onClick = { showAdsterraDialog = false },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextColorSecondary),
-                                border = BorderStroke(1.dp, CardBorder),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(46.dp)
-                            ) {
-                                Text(
-                                    text = "إغلاق نافذة الدعم",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -586,3 +476,4 @@ private fun Modifier.fillOuterSubTabRowModifier(): Modifier = this
     .clip(RoundedCornerShape(10.dp))
     .background(SurfaceDarkGlass)
     .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+

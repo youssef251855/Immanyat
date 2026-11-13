@@ -48,8 +48,37 @@ object AdhanManager {
     }
 
     // --- Location settings ---
+    private fun getDefaultCityByTimeZone(): Triple<Double, Double, String> {
+        return when (TimeZone.getDefault().id) {
+            "Africa/Cairo" -> Triple(30.0444, 31.2357, "القاهرة")
+            "Asia/Riyadh" -> Triple(24.7136, 46.6753, "الرياض")
+            "Asia/Dubai" -> Triple(25.2048, 55.2708, "دبي")
+            "Asia/Amman" -> Triple(31.9539, 35.9106, "عمّان")
+            "Asia/Jerusalem", "Asia/Gaza", "Asia/Hebron" -> Triple(31.7683, 35.2137, "القدس الشريف")
+            "Asia/Beirut" -> Triple(33.8938, 35.5018, "بيروت")
+            "Asia/Baghdad" -> Triple(33.3128, 44.3615, "بغداد")
+            "Asia/Damascus" -> Triple(33.5138, 36.2765, "دمشق")
+            "Asia/Kuwait" -> Triple(29.3759, 47.9774, "الكويت")
+            "Asia/Bahrain" -> Triple(26.2285, 50.5860, "المنامة")
+            "Asia/Qatar" -> Triple(25.2854, 51.5310, "الدوحة")
+            "Asia/Muscat" -> Triple(23.5859, 58.4059, "مسقط")
+            "Asia/Aden" -> Triple(15.3694, 44.1910, "صنعاء")
+            "Africa/Tripoli" -> Triple(32.8872, 13.1913, "طرابلس")
+            "Africa/Tunis" -> Triple(36.8065, 10.1815, "تونس")
+            "Africa/Algiers" -> Triple(36.7525, 3.0360, "الجزائر")
+            "Africa/Casablanca" -> Triple(34.0209, -6.8416, "الرباط")
+            "Africa/Khartoum" -> Triple(15.5007, 32.5599, "الخرطوم")
+            "Europe/Istanbul", "Asia/Istanbul" -> Triple(41.0082, 28.9784, "إسطنبول")
+            else -> Triple(DEFAULT_LATITUDE, DEFAULT_LONGITUDE, "مكة المكرمة")
+        }
+    }
+
     fun getSavedCoordinates(context: Context): Coordinates {
         val prefs = getPrefs(context)
+        if (!prefs.contains("latitude") || !prefs.contains("longitude")) {
+            val (lat, lon, _) = getDefaultCityByTimeZone()
+            return Coordinates(lat, lon)
+        }
         val lat = prefs.getFloat("latitude", DEFAULT_LATITUDE.toFloat()).toDouble()
         val lon = prefs.getFloat("longitude", DEFAULT_LONGITUDE.toFloat()).toDouble()
         return Coordinates(lat, lon)
@@ -61,10 +90,27 @@ object AdhanManager {
             .putFloat("longitude", longitude.toFloat())
             .putString("location_name", locationName)
             .apply()
+        try {
+            com.example.widget.WidgetUpdateHelper.updateAllWidgets(context)
+        } catch (_: Throwable) {}
     }
 
     fun getSavedLocationName(context: Context): String {
-        return getPrefs(context).getString("location_name", "مكة المكرمة") ?: "مكة المكرمة"
+        val prefs = getPrefs(context)
+        if (!prefs.contains("location_name")) {
+            return getDefaultCityByTimeZone().third
+        }
+        return prefs.getString("location_name", "مكة المكرمة") ?: "مكة المكرمة"
+    }
+
+    fun wasPrayerTriggeredToday(context: Context, prayerKey: String): Boolean {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        return getPrefs(context).getString("last_triggered_$prayerKey", "") == today
+    }
+
+    fun markPrayerTriggeredToday(context: Context, prayerKey: String) {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        getPrefs(context).edit().putString("last_triggered_$prayerKey", today).apply()
     }
 
     // --- Calculation and Madhab configs ---
@@ -278,7 +324,17 @@ object AdhanManager {
 
         val dateComponents = DateComponents.from(date)
         
-        val params = when (calcMethodKey) {
+        val defaultMethod = if (!getPrefs(context).contains("calc_method")) {
+            when (TimeZone.getDefault().id) {
+                "Africa/Cairo", "Africa/Khartoum", "Africa/Tripoli" -> "EGYPTIAN"
+                "Asia/Riyadh", "Asia/Kuwait", "Asia/Bahrain", "Asia/Qatar", "Asia/Muscat", "Asia/Dubai", "Asia/Aden" -> "UMM_AL_QURA"
+                else -> "MWL"
+            }
+        } else {
+            calcMethodKey
+        }
+
+        val params = when (defaultMethod) {
             "EGYPTIAN" -> CalculationMethod.EGYPTIAN.parameters
             "UMM_AL_QURA" -> CalculationMethod.UMM_AL_QURA.parameters
             "MWL" -> CalculationMethod.MUSLIM_WORLD_LEAGUE.parameters
@@ -342,23 +398,32 @@ object AdhanManager {
     }
 
     // --- Find Next Prayer and Remaining Countdown ---
-    fun getNextPrayer(context: Context): Pair<PrayerTimeInfo, Long>? {
-        val now = System.currentTimeMillis()
+    fun getNextPrayer(context: Context, bufferSeconds: Long = 15L): Pair<PrayerTimeInfo, Long>? {
+        val now = System.currentTimeMillis() + (bufferSeconds * 1000L)
         val todayPrayers = calculatePrayerTimesForDate(context, Date())
         
-        // Find if we have any remaining prayer today
-        val nextToday = todayPrayers.find { it.timeMillis > now && it.name != "Sunrise" }
+        // Find if we have any remaining enabled prayer today
+        val nextToday = todayPrayers.find { it.timeMillis > now && it.name != "Sunrise" && isPrayerEnabled(context, it.name) }
         if (nextToday != null) {
-            return Pair(nextToday, nextToday.timeMillis - now)
+            val diff = (nextToday.timeMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+            return Pair(nextToday, diff)
         }
         
-        // If not, use the first prayer of tomorrow
+        // If not, check tomorrow's prayers for first enabled prayer
         val cal = Calendar.getInstance()
         cal.add(Calendar.DAY_OF_YEAR, 1)
         val tomorrowPrayers = calculatePrayerTimesForDate(context, cal.time)
-        val firstTomorrow = tomorrowPrayers.find { it.name == "Fajr" }
+        val firstTomorrow = tomorrowPrayers.find { it.name != "Sunrise" && isPrayerEnabled(context, it.name) }
         if (firstTomorrow != null) {
-            return Pair(firstTomorrow, firstTomorrow.timeMillis - now)
+            val diff = (firstTomorrow.timeMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+            return Pair(firstTomorrow, diff)
+        }
+        
+        // Fallback: Tomorrow's Fajr even if toggled off so an alarm is always prepared
+        val defaultFajr = tomorrowPrayers.find { it.name == "Fajr" }
+        if (defaultFajr != null) {
+            val diff = (defaultFajr.timeMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+            return Pair(defaultFajr, diff)
         }
         
         return null
@@ -406,7 +471,7 @@ object AdhanManager {
     @SuppressLint("ScheduleExactAlarm")
     fun scheduleNextAlarm(context: Context) {
         try {
-            val nextPair = getNextPrayer(context) ?: return
+            val nextPair = getNextPrayer(context, 20L) ?: return
             val nextPrayer = nextPair.first
             val nextTimeMillis = nextPrayer.timeMillis
 
@@ -423,37 +488,45 @@ object AdhanManager {
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             val pendingIntent = PendingIntent.getBroadcast(context, 1001, intent, flags)
 
+            // Intent to open app when clicking alarm icon in lockscreen or notification
+            val showIntent = Intent(context, com.example.MainActivity::class.java).apply {
+                setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("OPEN_SCREEN", "ADHAN_SETTINGS")
+            }
+            val showPendingIntent = PendingIntent.getActivity(context, 1003, showIntent, flags)
+
+            // Set via AlarmClockInfo:
+            // 1) Exempts app from Background Foreground Service Start Restrictions (Android 12/13/14)
+            // 2) Bypasses Doze Mode and deep sleep restrictions reliably
+            // 3) Exactly triggers at the millisecond
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (alarmManager.canScheduleExactAlarms()) {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(nextTimeMillis, showPendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                Log.d("AdhanManager", "setAlarmClock succeeded for ${nextPrayer.arabicName} at ${nextPrayer.formattedTime} ($nextTimeMillis)")
+            } catch (e: Throwable) {
+                Log.w("AdhanManager", "setAlarmClock failed, falling back to setExactAndAllowWhileIdle", e)
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (alarmManager.canScheduleExactAlarms()) {
+                            alarmManager.setExactAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                nextTimeMillis,
+                                pendingIntent
+                            )
+                        } else {
+                            alarmManager.setAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                nextTimeMillis,
+                                pendingIntent
+                            )
+                        }
+                    } else {
                         alarmManager.setExactAndAllowWhileIdle(
                             AlarmManager.RTC_WAKEUP,
                             nextTimeMillis,
                             pendingIntent
                         )
-                    } else {
-                        alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP,
-                            nextTimeMillis,
-                            pendingIntent
-                        )
                     }
-                } else {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        nextTimeMillis,
-                        pendingIntent
-                    )
-                }
-                Log.d("AdhanManager", "Alarm scheduled for ${nextPrayer.arabicName} at ${nextPrayer.formattedTime}")
-            } catch (e: Throwable) {
-                Log.e("AdhanManager", "Failed to schedule exact alarm, trying standard relaxed alarm", e)
-                try {
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        nextTimeMillis,
-                        pendingIntent
-                    )
                 } catch (e2: Throwable) {
                     Log.e("AdhanManager", "Failed entirely to schedule primary alarm", e2)
                 }
@@ -463,7 +536,7 @@ object AdhanManager {
             val preMinutes = getPreAdhanMinutes(context)
             if (preMinutes > 0) {
                 val preTimeMillis = nextTimeMillis - (preMinutes * 60 * 1000)
-                if (preTimeMillis > System.currentTimeMillis()) {
+                if (preTimeMillis > System.currentTimeMillis() + 10000L) {
                     val preIntent = Intent(context, AdhanAlarmReceiver::class.java).apply {
                         action = "com.example.ACTION_TRIGGER_ATHAN"
                         putExtra("PRAYER_NAME", nextPrayer.name)
@@ -474,19 +547,56 @@ object AdhanManager {
                     }
                     val prePendingIntent = PendingIntent.getBroadcast(context, 1002, preIntent, flags)
                     try {
-                        alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP,
-                            preTimeMillis,
-                            prePendingIntent
-                        )
-                        Log.d("AdhanManager", "Pre-Adhan scheduled $preMinutes mins before ${nextPrayer.arabicName}")
+                        val preClockInfo = AlarmManager.AlarmClockInfo(preTimeMillis, showPendingIntent)
+                        alarmManager.setAlarmClock(preClockInfo, prePendingIntent)
+                        Log.d("AdhanManager", "Pre-Adhan setAlarmClock $preMinutes mins before ${nextPrayer.arabicName}")
                     } catch (e3: Throwable) {
-                        Log.e("AdhanManager", "Failed to schedule pre-adhan alarm", e3)
+                        try {
+                            alarmManager.setAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                preTimeMillis,
+                                prePendingIntent
+                            )
+                        } catch (t: Throwable) {}
                     }
                 }
             }
         } catch (t: Throwable) {
             Log.e("AdhanManager", "General error inside scheduleNextAlarm", t)
+        }
+    }
+
+    // --- Schedule Immediate Test Alarm for Testing Locking & Alarm Trigger ---
+    @SuppressLint("ScheduleExactAlarm")
+    fun scheduleTestAlarm(context: Context, delaySeconds: Int = 10) {
+        try {
+            val triggerTime = System.currentTimeMillis() + (delaySeconds * 1000L)
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            
+            val intent = Intent(context, AdhanAlarmReceiver::class.java).apply {
+                action = "com.example.ACTION_TRIGGER_ATHAN"
+                putExtra("PRAYER_NAME", "Asr")
+                putExtra("PRAYER_ARABIC", "العصر (تجربة)")
+                putExtra("PRAYER_TIME", triggerTime)
+                putExtra("IS_TEST", true)
+            }
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val pendingIntent = PendingIntent.getBroadcast(context, 1099, intent, flags)
+
+            val showIntent = Intent(context, com.example.MainActivity::class.java).apply {
+                setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val showPendingIntent = PendingIntent.getActivity(context, 1098, showIntent, flags)
+
+            try {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTime, showPendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                Log.d("AdhanManager", "Test alarmClock scheduled for $delaySeconds seconds from now")
+            } catch (e: Throwable) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+            }
+        } catch (t: Throwable) {
+            Log.e("AdhanManager", "Failed to schedule test alarm", t)
         }
     }
 }

@@ -60,6 +60,26 @@ class EmaniatRepository(private val db: AppDatabase) {
         recalculateProgressAndPoints(date)
     }
 
+    suspend fun saveCompleteStreakData(streak: StreakData) {
+        db.streakDao().saveStreak(streak)
+    }
+
+    suspend fun restoreChallengesFromCloud(completedIds: List<String>) {
+        val all = db.challengeDao().getAllChallenges().first()
+        for (ch in all) {
+            val shouldBeCompleted = completedIds.contains(ch.id)
+            if (ch.isCompleted != shouldBeCompleted) {
+                db.challengeDao().updateChallengeStatus(ch.id, shouldBeCompleted)
+            }
+        }
+    }
+
+    suspend fun restoreTasbihCountsFromCloud(map: Map<String, Int>) {
+        for ((id, count) in map) {
+            db.tasbihDao().updateCount(id, count, System.currentTimeMillis())
+        }
+    }
+
     suspend fun completeChallenge(id: String, completed: Boolean) {
         db.challengeDao().updateChallengeStatus(id, completed)
         if (completed) {

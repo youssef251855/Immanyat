@@ -3,6 +3,7 @@ package com.example.ui.theme
 import androidx.compose.ui.graphics.Color
 
 val DarkBackground = Color(0xFF070B09)
+val DarkBackgroundElevated = Color(0xFF131C18)
 val SurfaceDarkGlass = Color(0xFF0E1613)
 val EmeraldPrimary = Color(0xFF0F7A50)
 val EmeraldSecondary = Color(0xFF1EAD74)

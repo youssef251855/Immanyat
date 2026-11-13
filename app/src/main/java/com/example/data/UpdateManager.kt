@@ -73,14 +73,18 @@ object UpdateManager {
             
         try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Failed response code: ${response.code}")
+                if (response.code == 404) {
+                    Log.i(TAG, "No remote update manifest found (HTTP 404); skipping update prompt.")
                     return null
                 }
-                
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Update check returned HTTP ${response.code}")
+                    return null
+                }
+
                 val bodyString = response.body?.string() ?: return null
                 Log.d(TAG, "Update response details: $bodyString")
-                
+
                 val json = JSONObject(bodyString)
                 val latestVersionCode = json.optInt("latestVersionCode", 1)
                 val latestVersionName = json.optString("latestVersionName", "1.0")
@@ -89,7 +93,7 @@ object UpdateManager {
                 val changelogAr = json.optString("changelogAr", "")
                 val changelogEn = json.optString("changelogEn", "")
                 val updateUrl = json.optString("updateUrl", "https://play.google.com/store/apps/details?id=com.immanyat.com")
-                
+
                 return UpdateInfo(
                     latestVersionCode = latestVersionCode,
                     latestVersionName = latestVersionName,
@@ -101,7 +105,7 @@ object UpdateManager {
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception while fetching update file: ${e.message}", e)
+            Log.w(TAG, "Update check unavailable: ${e.message}")
             return null
         }
     }

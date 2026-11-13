@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "UserCloudProfile": {
+      "title": "UserCloudProfile",
+      "description": "Cloud-synced spiritual profile, streak progress, challenges, and tasbih counts for an authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Authenticated Firebase user ID"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "userTitle": {
+          "type": "string",
+          "description": "Spiritual rank title"
+        },
+        "points": {
+          "type": "integer",
+          "description": "Total accumulated spiritual points"
+        },
+        "level": {
+          "type": "integer",
+          "description": "Current user level"
+        },
+        "currentStreak": {
+          "type": "integer",
+          "description": "Current consecutive worship days"
+        },
+        "highestStreak": {
+          "type": "integer",
+          "description": "Best consecutive worship days streak"
+        },
+        "khatmaProgressPages": {
+          "type": "integer",
+          "description": "Current Quran khatma page progress (0-604)"
+        },
+        "completedChallenges": {
+          "type": "array",
+          "description": "List of completed faith challenge IDs"
+        },
+        "tasbihCounts": {
+          "type": "object",
+          "description": "Map of Tasbih item ID to accumulated count"
+        },
+        "lastSyncTime": {
+          "type": "integer",
+          "description": "Epoch milliseconds of last cloud sync"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation (FieldValue.serverTimestamp())"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update (FieldValue.serverTimestamp())"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "userTitle",
+        "points",
+        "level",
+        "currentStreak",
+        "highestStreak",
+        "khatmaProgressPages",
+        "completedChallenges",
+        "tasbihCounts",
+        "lastSyncTime",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserCloudProfile"
+      },
+      "description": "User-owned cloud profile and worship achievements document."
+    }
+  }
+}

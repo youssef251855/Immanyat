@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny all reads and writes by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidUserCloudProfile(data) {
+      return data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+             data.displayName is string && data.displayName.size() <= 120 &&
+             data.email is string && data.email.size() <= 254 &&
+             data.userTitle is string && data.userTitle.size() <= 100 &&
+             data.points is int && data.points >= 0 &&
+             data.level is int && data.level >= 1 &&
+             data.currentStreak is int && data.currentStreak >= 0 &&
+             data.highestStreak is int && data.highestStreak >= 0 &&
+             data.khatmaProgressPages is int && data.khatmaProgressPages >= 0 && data.khatmaProgressPages <= 604 &&
+             data.completedChallenges is list && data.completedChallenges.size() <= 100 &&
+             (data.completedChallenges.size() == 0 || data.completedChallenges[0] is string) &&
+             data.tasbihCounts is map && data.tasbihCounts.size() <= 50 &&
+             data.lastSyncTime is int && data.lastSyncTime >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().uid == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll([
+                         'uid', 'displayName', 'email', 'userTitle',
+                         'points', 'level', 'currentStreak', 'highestStreak',
+                         'khatmaProgressPages', 'completedChallenges', 'tasbihCounts',
+                         'lastSyncTime', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'uid', 'displayName', 'email', 'userTitle',
+                         'points', 'level', 'currentStreak', 'highestStreak',
+                         'khatmaProgressPages', 'completedChallenges', 'tasbihCounts',
+                         'lastSyncTime', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserCloudProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserCloudProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'email', 'userTitle',
+                         'points', 'level', 'currentStreak', 'highestStreak',
+                         'khatmaProgressPages', 'completedChallenges', 'tasbihCounts',
+                         'lastSyncTime', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+  }
+}
