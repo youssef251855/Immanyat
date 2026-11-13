@@ -52,6 +52,8 @@ jobs:
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
         run: |
           if [ -n "$SIGNING_KEY" ]; then
             echo "has_signing_key=true" >> "$GITHUB_OUTPUT"
@@ -72,6 +74,66 @@ jobs:
           fi
           if [ -n "$PAYPAL_CLIENT_SECRET" ]; then
             sed -i "s|^PAYPAL_CLIENT_SECRET=.*|PAYPAL_CLIENT_SECRET=$PAYPAL_CLIENT_SECRET|" .env
+          fi
+
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            case "$GOOGLE_SERVICES_JSON" in
+              \{*) printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json ;;
+              *) printf '%s' "$GOOGLE_SERVICES_JSON" | base64 --decode > app/google-services.json ;;
+            esac
+          elif [ ! -f app/google-services.json ]; then
+            echo "::warning::app/google-services.json not found in repo and GOOGLE_SERVICES_JSON secret not set; generating fallback config for APK build."
+            FB_KEY="${FIREBASE_API_KEY:-placeholder-firebase-api-key}"
+            cat > app/google-services.json <<EOF
+          {
+            "project_info": {
+              "project_number": "102717653972",
+              "firebase_url": "https://joe-learn-13378-default-rtdb.firebaseio.com",
+              "project_id": "joe-learn-13378",
+              "storage_bucket": "joe-learn-13378.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:102717653972:android:c81f537b996fdb00740c41",
+                  "android_client_info": {
+                    "package_name": "com.immanyat.com"
+                  }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "102717653972-0oi94hdjskso8pp3u9b327tj5imsgip0.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.immanyat.com",
+                      "certificate_hash": "5c5f46fcfed0065a21d87f77865645789bfc130f"
+                    }
+                  },
+                  {
+                    "client_id": "102717653972-7eb2hcd2l24jo1m773th59d8riem9ih7.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [
+                  {
+                    "current_key": "$FB_KEY"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "102717653972-7eb2hcd2l24jo1m773th59d8riem9ih7.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
           fi
 
           if [ ! -f debug.keystore ]; then
