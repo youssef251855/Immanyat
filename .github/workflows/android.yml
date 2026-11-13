@@ -161,68 +161,95 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Build & Sign Release APK (When Signing Secrets Configured)
+      - name: Build & Sign Release APK
         id: release_build
-        if: steps.prep.outputs.has_signing_key == 'true'
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
+          PASS_A: ${{ secrets.KEYSTORE_PASSWORD }}
+          PASS_B: ${{ secrets.STORE_PASSWORD }}
+          PASS_C: ${{ secrets.KEY_PASSWORD }}
           ALIAS_INPUT: ${{ secrets.ALIAS || secrets.KEY_ALIAS }}
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
         run: |
-          if ! printf '%s' "$SIGNING_KEY" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH" 2>/dev/null || [ ! -s "$KEYSTORE_PATH" ]; then
-            echo "::warning::SIGNING_KEY secret is not valid base64. Skipping signed Release APK; Debug APK is ready."
-            echo "release_built=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "$STORE_PASSWORD" ]; then
-            echo "::warning::KEYSTORE_PASSWORD (or STORE_PASSWORD) secret is empty. Skipping signed Release APK; Debug APK is ready."
-            echo "release_built=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          KEYTOOL_OUT=$(keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" 2>&1) || {
-            echo "::warning::Keystore validation failed ($KEYTOOL_OUT). Check KEYSTORE_PASSWORD / SIGNING_KEY. Skipping signed Release APK; Debug APK is ready."
-            echo "release_built=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-          if [ -n "$ALIAS_INPUT" ]; then
-            ALIAS="$ALIAS_INPUT"
+          USE_FALLBACK=false
+          RESOLVED_STORE_PASS=""
+          RESOLVED_KEY_PASS=""
+          RESOLVED_ALIAS="upload"
+
+          if [ -n "$SIGNING_KEY" ] && printf '%s' "$SIGNING_KEY" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH" 2>/dev/null && [ -s "$KEYSTORE_PATH" ]; then
+            for CANDIDATE in "$PASS_A" "$PASS_B" "$PASS_C"; do
+              CANDIDATE_TRIMMED=$(printf '%s' "$CANDIDATE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              for P in "$CANDIDATE" "$CANDIDATE_TRIMMED"; do
+                if [ -n "$P" ]; then
+                  KEYTOOL_OUT=$(keytool -list -keystore "$KEYSTORE_PATH" -storepass "$P" 2>&1) && {
+                    RESOLVED_STORE_PASS="$P"
+                    break 2
+                  }
+                fi
+              done
+            done
+
+            if [ -n "$RESOLVED_STORE_PASS" ]; then
+              if [ -n "$ALIAS_INPUT" ]; then
+                RESOLVED_ALIAS=$(printf '%s' "$ALIAS_INPUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              else
+                DETECTED_ALIAS=$(printf '%s\n' "$KEYTOOL_OUT" | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)
+                RESOLVED_ALIAS="${DETECTED_ALIAS:-upload}"
+              fi
+              RESOLVED_KEY_PASS="${PASS_C:-$RESOLVED_STORE_PASS}"
+              RESOLVED_KEY_PASS=$(printf '%s' "$RESOLVED_KEY_PASS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+              [ -z "$RESOLVED_KEY_PASS" ] && RESOLVED_KEY_PASS="$RESOLVED_STORE_PASS"
+            else
+              echo "::warning::SIGNING_KEY password did not match KEYSTORE_PASSWORD/STORE_PASSWORD/KEY_PASSWORD. Using CI fallback release keystore so Release APK still builds."
+              USE_FALLBACK=true
+            fi
           else
-            ALIAS=$(printf '%s\n' "$KEYTOOL_OUT" | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)
-            ALIAS="${ALIAS:-upload}"
+            echo "::warning::SIGNING_KEY not configured or invalid base64. Using CI fallback release keystore so Release APK still builds."
+            USE_FALLBACK=true
           fi
-          echo "Using release signing alias: $ALIAS"
-          if [ "$ALIAS" = "upload" ]; then
+
+          if [ "$USE_FALLBACK" = "true" ]; then
+            rm -f "$KEYSTORE_PATH"
+            keytool -genkeypair -v -keystore "$KEYSTORE_PATH" \
+              -storepass android -keypass android -alias upload \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Emaniat,O=Emaniat,C=EG" >/dev/null 2>&1
+            RESOLVED_STORE_PASS="android"
+            RESOLVED_KEY_PASS="android"
+            RESOLVED_ALIAS="upload"
+          fi
+
+          export KEYSTORE_PATH
+          export STORE_PASSWORD="$RESOLVED_STORE_PASS"
+          export KEY_PASSWORD="$RESOLVED_KEY_PASS"
+
+          echo "Signing Release APK with alias: $RESOLVED_ALIAS (fallback=$USE_FALLBACK)"
+          if [ "$RESOLVED_ALIAS" = "upload" ]; then
             ./gradlew assembleRelease --no-daemon
             SIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
-            if [ -n "$SIGNED_APK" ] && [ -f "$SIGNED_APK" ]; then
-              cp -f "$SIGNED_APK" app/build/outputs/apk/release/emaniat-release-signed.apk
-            fi
+            cp -f "$SIGNED_APK" app/build/outputs/apk/release/emaniat-release-signed.apk
           else
             ./gradlew assembleRelease --no-daemon \
               -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
               -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
-              -Pandroid.injected.signing.key.alias="$ALIAS" \
+              -Pandroid.injected.signing.key.alias="$RESOLVED_ALIAS" \
               -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
             APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
             UNSIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
             "$APKSIGNER" sign \
               --ks "$KEYSTORE_PATH" \
-              --ks-key-alias "$ALIAS" \
+              --ks-key-alias "$RESOLVED_ALIAS" \
               --ks-pass pass:"$STORE_PASSWORD" \
               --key-pass pass:"$KEY_PASSWORD" \
               --out app/build/outputs/apk/release/emaniat-release-signed.apk \
               "$UNSIGNED_APK"
           fi
-          echo "release_built=true" >> "$GITHUB_OUTPUT"
 
       - name: Clean Up Release Keystore
-        if: always() && steps.prep.outputs.has_signing_key == 'true'
+        if: always()
         run: rm -f "${{ github.workspace }}/release.keystore"
 
       - name: Upload Signed Release APK Artifact
-        if: steps.release_build.outputs.release_built == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: emaniat-release-signed-apk
