@@ -35,12 +35,19 @@ jobs:
         run: chmod +x gradlew
 
       - name: Prepare Environment & Debug Keystore
+        id: prep
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           STARTIO_APP_ID: ${{ secrets.STARTIO_APP_ID }}
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "has_signing_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_signing_key=false" >> "$GITHUB_OUTPUT"
+          fi
           if [ ! -f .env ]; then
             cp .env.example .env
           fi
@@ -79,7 +86,7 @@ jobs:
           if-no-files-found: error
 
       - name: Build & Sign Release APK (When Signing Secrets Configured)
-        if: ${{ secrets.SIGNING_KEY != '' }}
+        if: steps.prep.outputs.has_signing_key == 'true'
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -90,7 +97,8 @@ jobs:
           echo "$SIGNING_KEY" | base64 --decode > "$KEYSTORE_PATH"
           if [ "${ALIAS:-upload}" = "upload" ]; then
             ./gradlew assembleRelease --no-daemon
-            cp app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/emaniat-release-signed.apk
+            SIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
+            cp "$SIGNED_APK" app/build/outputs/apk/release/emaniat-release-signed.apk
           else
             ./gradlew assembleRelease --no-daemon \
               -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
@@ -109,11 +117,11 @@ jobs:
           fi
 
       - name: Clean Up Release Keystore
-        if: always() && secrets.SIGNING_KEY != ''
+        if: always() && steps.prep.outputs.has_signing_key == 'true'
         run: rm -f "${{ github.workspace }}/release.keystore"
 
       - name: Upload Signed Release APK Artifact
-        if: ${{ secrets.SIGNING_KEY != '' }}
+        if: steps.prep.outputs.has_signing_key == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: emaniat-release-signed-apk
