@@ -158,16 +158,27 @@ jobs:
           if-no-files-found: error
 
       - name: Build & Sign Release APK (When Signing Secrets Configured)
+        id: release_build
         if: steps.prep.outputs.has_signing_key == 'true'
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          ALIAS: ${{ secrets.ALIAS }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS || secrets.KEY_ALIAS || 'upload' }}
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
         run: |
-          echo "$SIGNING_KEY" | base64 --decode > "$KEYSTORE_PATH"
-          if [ "${ALIAS:-upload}" = "upload" ]; then
+          printf '%s' "$SIGNING_KEY" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH"
+          if [ -z "$STORE_PASSWORD" ]; then
+            echo "::warning::KEYSTORE_PASSWORD (or STORE_PASSWORD) secret is empty. Skipping signed Release APK; Debug APK is ready."
+            echo "release_built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" >/dev/null 2>&1; then
+            echo "::warning::Release keystore password or base64 SIGNING_KEY is invalid. Skipping signed Release APK; Debug APK is ready."
+            echo "release_built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$ALIAS" = "upload" ]; then
             ./gradlew assembleRelease --no-daemon
             SIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
             cp "$SIGNED_APK" app/build/outputs/apk/release/emaniat-release-signed.apk
@@ -187,13 +198,14 @@ jobs:
               --out app/build/outputs/apk/release/emaniat-release-signed.apk \
               "$UNSIGNED_APK"
           fi
+          echo "release_built=true" >> "$GITHUB_OUTPUT"
 
       - name: Clean Up Release Keystore
         if: always() && steps.prep.outputs.has_signing_key == 'true'
         run: rm -f "${{ github.workspace }}/release.keystore"
 
       - name: Upload Signed Release APK Artifact
-        if: steps.prep.outputs.has_signing_key == 'true'
+        if: steps.release_build.outputs.release_built == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: emaniat-release-signed-apk
