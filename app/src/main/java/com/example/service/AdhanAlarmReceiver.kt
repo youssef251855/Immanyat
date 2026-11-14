@@ -235,7 +235,6 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
-            .setFullScreenIntent(pIntent, true)
             .setContentIntent(pIntent)
 
         notificationManager.notify(12345, builder.build())

@@ -121,7 +121,7 @@ class AdhanPlayerService : Service() {
             }
             startActivity(alarmIntent)
         } catch (t: Throwable) {
-            Log.w("AdhanPlayerService", "Direct startActivity suppressed (fullScreenIntent notification will handle): ${t.message}")
+            Log.w("AdhanPlayerService", "Direct startActivity deferred (high-priority alarm notification active): ${t.message}")
         }
     }
 
@@ -175,7 +175,6 @@ class AdhanPlayerService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setOngoing(true)
-            .setFullScreenIntent(pIntent, true) // Show full screen on lock screen
             .setContentIntent(pIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "إيقاف الأذان 🔇", pStopIntent)
 

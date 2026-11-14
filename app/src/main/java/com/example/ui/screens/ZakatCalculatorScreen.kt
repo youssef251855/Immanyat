@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -64,6 +65,11 @@ fun ZakatCalculatorScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    BackHandler {
+        viewModel.setScreen(AppScreen.HOME)
+        viewModel.triggerHaptic()
+    }
 
     var selectedCurrency by remember { mutableStateOf(CURRENCIES[0]) }
     var goldPricePerGram by remember { mutableStateOf(selectedCurrency.defaultGoldGramPrice.toString()) }

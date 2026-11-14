@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.OptIn
@@ -183,6 +184,11 @@ fun EmaniatApp(
             onLoginSuccess = {}
         )
     } else {
+        BackHandler(enabled = currentScreen != AppScreen.HOME) {
+            viewModel.setScreen(AppScreen.HOME)
+            viewModel.triggerHaptic()
+        }
+
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
@@ -424,17 +430,10 @@ fun EmaniatApp(
                         }
 
                         when (profileSubTab) {
-                            0 -> ProfileScreen(viewModel = viewModel)
-                            1 -> ChallengesScreen(viewModel = viewModel)
-                            2 -> {
-                                // Renders ProfileScreen tab with Spiritual Journey Map
-                                // We simulate opening journey sub tab in custom profile view
-                                ProfileScreen(viewModel = viewModel)
-                            }
-                            else -> {
-                                // Unlock Medal badges
-                                ChallengesScreen(viewModel = viewModel)
-                            }
+                            0 -> ProfileScreen(viewModel = viewModel, initialTab = 0)
+                            1 -> ChallengesScreen(viewModel = viewModel, initialTab = 0)
+                            2 -> ProfileScreen(viewModel = viewModel, initialTab = 1)
+                            else -> ChallengesScreen(viewModel = viewModel, initialTab = 1)
                         }
                     }
                 }

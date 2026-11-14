@@ -569,22 +569,6 @@ fun HomeScreen(
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
-                            if (viewModel.isVipPremiumActive) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Brush.linearGradient(listOf(GoldAccent, Color(0xFFFFA500))))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = "PRO 👑",
-                                        color = Color.Black,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(

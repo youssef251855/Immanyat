@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -10,6 +13,9 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import androidx.activity.compose.BackHandler
+import androidx.core.content.ContextCompat
+import com.example.data.AdhanManager
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -86,12 +92,22 @@ fun QiblaCompassScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedCity by remember { mutableStateOf(PRESET_CITIES[3]) } // Default Cairo / Middle East
+
+    BackHandler {
+        viewModel.setScreen(AppScreen.HOME)
+        viewModel.triggerHaptic()
+    }
+
+    val savedCoords = remember { AdhanManager.getSavedCoordinates(context) }
+    val savedLocationName = remember { AdhanManager.getSavedLocationName(context) }
+    var selectedCity by remember {
+        mutableStateOf(PRESET_CITIES.find { it.name == savedLocationName } ?: PRESET_CITIES[3])
+    }
     var showCityPicker by remember { mutableStateOf(false) }
 
-    var userLat by remember { mutableDoubleStateOf(selectedCity.lat) }
-    var userLng by remember { mutableDoubleStateOf(selectedCity.lng) }
-    var locationName by remember { mutableStateOf(selectedCity.name) }
+    var userLat by remember { mutableDoubleStateOf(savedCoords.latitude) }
+    var userLng by remember { mutableDoubleStateOf(savedCoords.longitude) }
+    var locationName by remember { mutableStateOf(savedLocationName) }
 
     // Compass Sensor Azimuth state (0 to 360)
     var deviceAzimuth by remember { mutableFloatStateOf(0f) }
@@ -142,26 +158,51 @@ fun QiblaCompassScreen(
     DisposableEffect(Unit) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        val orientationSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ORIENTATION) else null
+        val accelSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
+        val magnetSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
 
-        if (rotationSensor == null && orientationSensor == null) {
+        if (rotationSensor == null && (accelSensor == null || magnetSensor == null)) {
             hasCompassSensor = false
         }
 
         val listener = object : SensorEventListener {
             private val rotationMatrix = FloatArray(9)
             private val orientationValues = FloatArray(3)
+            private val accelValues = FloatArray(3)
+            private val magnetValues = FloatArray(3)
+            private var hasAccel = false
+            private var hasMagnet = false
 
             override fun onSensorChanged(event: SensorEvent?) {
                 if (event == null) return
-                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
-                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                    SensorManager.getOrientation(rotationMatrix, orientationValues)
-                    var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                    if (azimuthDeg < 0) azimuthDeg += 360f
-                    deviceAzimuth = azimuthDeg
-                } else if (event.sensor.type == Sensor.TYPE_ORIENTATION) {
-                    deviceAzimuth = event.values[0]
+                when (event.sensor.type) {
+                    Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                        SensorManager.getOrientation(rotationMatrix, orientationValues)
+                        var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                        if (azimuthDeg < 0) azimuthDeg += 360f
+                        deviceAzimuth = azimuthDeg
+                    }
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        System.arraycopy(event.values, 0, accelValues, 0, 3)
+                        hasAccel = true
+                        if (hasMagnet && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                            if (azimuthDeg < 0) azimuthDeg += 360f
+                            deviceAzimuth = azimuthDeg
+                        }
+                    }
+                    Sensor.TYPE_MAGNETIC_FIELD -> {
+                        System.arraycopy(event.values, 0, magnetValues, 0, 3)
+                        hasMagnet = true
+                        if (hasAccel && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                            if (azimuthDeg < 0) azimuthDeg += 360f
+                            deviceAzimuth = azimuthDeg
+                        }
+                    }
                 }
             }
 
@@ -170,21 +211,27 @@ fun QiblaCompassScreen(
 
         if (rotationSensor != null) {
             sensorManager?.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
-        } else if (orientationSensor != null) {
-            sensorManager?.registerListener(listener, orientationSensor, SensorManager.SENSOR_DELAY_UI)
+        } else if (accelSensor != null && magnetSensor != null) {
+            sensorManager?.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager?.registerListener(listener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
         }
 
-        // Try getting last known location
-        try {
-            val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            val lastLoc: Location? = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            if (lastLoc != null) {
+        // Try getting last known location only when runtime permission is granted
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            getLastKnownLocationSafely(context, fineGranted)?.let { lastLoc ->
                 userLat = lastLoc.latitude
                 userLng = lastLoc.longitude
                 locationName = "موقعي الحالي (GPS)"
             }
-        } catch (t: Throwable) {}
+        }
 
         onDispose {
             sensorManager?.unregisterListener(listener)
@@ -679,3 +726,16 @@ fun calculateDistanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double):
     val c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return r * c
 }
+
+@SuppressLint("MissingPermission")
+private fun getLastKnownLocationSafely(context: Context, fineGranted: Boolean): Location? {
+    return try {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return null
+        val gpsLoc = if (fineGranted) locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER) else null
+        gpsLoc ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+    } catch (_: Throwable) {
+        null
+    }
+}
+

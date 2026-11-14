@@ -31,13 +31,6 @@ data class PrayerTimeInfo(
     val isEnabled: Boolean = true
 )
 
-data class MosqueModel(
-    val name: String,
-    val distanceMeters: Int,
-    val directionDegrees: Double,
-    val address: String
-)
-
 object AdhanManager {
     private const val PREFS_NAME = "emaniat_adhan_prefs"
     private const val DEFAULT_LATITUDE = 21.4225
@@ -449,22 +442,6 @@ object AdhanManager {
         
         qiblaDeg = (qiblaDeg + 360.0) % 360.0
         return qiblaDeg
-    }
-
-    // --- Simulated Nearest Mosques ---
-    fun getNearestMosques(context: Context): List<MosqueModel> {
-        val coords = getSavedCoordinates(context)
-        val qibla = calculateQiblaDirection(context)
-        
-        // Generate coordinates and parameters relative to the user position as deterministic mocks
-        val baseSeed = (coords.latitude + coords.longitude).toInt()
-        val rand = Random(baseSeed.toLong())
-        
-        return listOf(
-            MosqueModel("مسجد التقوى", 240 + rand.nextInt(400), (qibla - 15 + rand.nextInt(30) + 360) % 360, "على بعد دقيقتين سيرًا"),
-            MosqueModel("مسجد الرحمن", 650 + rand.nextInt(300), (qibla - 8 + rand.nextInt(25) + 360) % 360, "على بعد 7 دقائق سيرًا"),
-            MosqueModel("مسجد النور الكبير", 1200 + rand.nextInt(600), (qibla + 20 + rand.nextInt(30) + 360) % 360, "على بعد 3 دقائق بالسيارة")
-        )
     }
 
     // --- Android Exact Alarm Rescheduler ---

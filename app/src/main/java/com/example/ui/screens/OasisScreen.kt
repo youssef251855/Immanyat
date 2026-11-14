@@ -9,6 +9,7 @@ import android.hardware.SensorManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -105,6 +106,10 @@ fun OasisScreen(
     val handleBack = {
         viewModel.triggerHaptic()
         activeFeatureId = null
+    }
+
+    BackHandler(enabled = activeFeatureId != null) {
+        handleBack()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -223,7 +228,7 @@ fun MainFeaturesSelectorGrid(
 ) {
     val features = remember {
         listOf(
-            Triple(0, "بوصلة القبلة التفاعلية", Pair("تحديد دقيق ومحاكاة حركية باتجاه الكعبة المشرفة", Icons.Default.CompassCalibration)),
+            Triple(0, "بوصلة القبلة التفاعلية", Pair("تحديد دقيق باتجاه الكعبة المشرفة بناءً على إحداثياتك ومستشعر البوصلة", Icons.Default.CompassCalibration)),
             Triple(1, "حاسبة الزكاة الذكية", Pair("احتساب الزكاة على الأموال، الذهب والفضة مع حد النصاب الشرعي", Icons.Default.Calculate)),
             Triple(2, "أسماء الله الحسنى", Pair("استكشاف معاني أسماء الله الـ 99 الروحية مع عدادات ورد خاصة لكل اسم", Icons.Default.Shield)),
             Triple(3, "البحث والتفسير الشامل", Pair("ابحث عن أي كلمة بالقرآن وحلّل تفسير الجلالين للتدبر المباشر", Icons.Default.Search)),
@@ -366,13 +371,83 @@ fun MainFeaturesSelectorGrid(
 @Composable
 fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
     val context = LocalContext.current
-    var simulatedAngle by remember { mutableStateOf(120f) }
-    val qiblaTargetAngle = 21f // Target angle for Saudi Makkah coordinates from this offset compass calibration
-    
+    var azimuthAngle by remember { mutableFloatStateOf(0f) }
+    var isSensorAvailable by remember { mutableStateOf(true) }
+    val savedLocationName = remember { com.example.data.AdhanManager.getSavedLocationName(context) }
+    val qiblaTargetAngle = remember {
+        com.example.data.AdhanManager.calculateQiblaDirection(context).toFloat()
+    }
+
+    DisposableEffect(Unit) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val accelSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
+        val magnetSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
+
+        if (rotationSensor == null && (accelSensor == null || magnetSensor == null)) {
+            isSensorAvailable = false
+        }
+
+        val listener = object : SensorEventListener {
+            private val rotationMatrix = FloatArray(9)
+            private val orientationValues = FloatArray(3)
+            private val accelValues = FloatArray(3)
+            private val magnetValues = FloatArray(3)
+            private var hasAccel = false
+            private var hasMagnet = false
+
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (event == null) return
+                when (event.sensor.type) {
+                    Sensor.TYPE_ROTATION_VECTOR -> {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                        SensorManager.getOrientation(rotationMatrix, orientationValues)
+                        var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                        if (deg < 0f) deg += 360f
+                        azimuthAngle = deg
+                    }
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        System.arraycopy(event.values, 0, accelValues, 0, 3)
+                        hasAccel = true
+                        if (hasMagnet && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                            if (deg < 0f) deg += 360f
+                            azimuthAngle = deg
+                        }
+                    }
+                    Sensor.TYPE_MAGNETIC_FIELD -> {
+                        System.arraycopy(event.values, 0, magnetValues, 0, 3)
+                        hasMagnet = true
+                        if (hasAccel && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                            if (deg < 0f) deg += 360f
+                            azimuthAngle = deg
+                        }
+                    }
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+
+        if (rotationSensor != null) {
+            sensorManager?.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
+        } else if (accelSensor != null && magnetSensor != null) {
+            sensorManager?.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_UI)
+            sensorManager?.registerListener(listener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
+        }
+
+        onDispose {
+            sensorManager?.unregisterListener(listener)
+        }
+    }
+
     // Smooth magnetic animation when alignment occurs
-    val isAligned = remember(simulatedAngle) {
-        val diff = Math.abs(simulatedAngle - qiblaTargetAngle)
-        diff < 3f || diff > 357f
+    val isAligned = remember(azimuthAngle, qiblaTargetAngle) {
+        val diff = kotlin.math.abs(azimuthAngle - qiblaTargetAngle)
+        diff < 3.5f || diff > 356.5f
     }
 
     val compassHaloScale by animateFloatAsState(
@@ -401,7 +476,7 @@ fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
     ) {
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "بوصلة اتجاه الكعبة المشرّفة التفاعلية",
+                text = "بوصلة اتجاه الكعبة المشرّفة",
                 color = GoldAccent,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
@@ -410,7 +485,11 @@ fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "تقدير افتراضي وتفاعلي لاتجاه القبلة حسب إحداثيات بيت الله العتيق بمكة. حرّك عتلة التدوير أدناه لمحاكاة توافق حركية المستشعرات في هاتفك المحمول.",
+                text = if (isSensorAvailable) {
+                    "زاوية القبلة الدقيقة لمدينة $savedLocationName هي ${qiblaTargetAngle.toInt()}° من الشمال. ضع الهاتف بشكل أفقي واتجه بالسهم الذهبي."
+                } else {
+                    "لا تتوفر مستشعرات البوصلة على هذا الجهاز. زاوية القبلة لمدينة $savedLocationName هي ${qiblaTargetAngle.toInt()}° من الشمال، ويمكنك استخدام المعايرة اليدوية أدناه."
+                },
                 color = TextColorSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -463,7 +542,7 @@ fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotate(-simulatedAngle + qiblaTargetAngle),
+                    .rotate(-azimuthAngle + qiblaTargetAngle),
                 contentAlignment = Alignment.Center
             ) {
                 // Compass Needle
@@ -515,13 +594,13 @@ fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "${simulatedAngle.toInt()}°",
+                    text = "${azimuthAngle.toInt()}°",
                     color = if (isAligned) GoldAccent else LightWhite,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = if (isAligned) "وجهة منضبطة" else "ابحث عن ٢١°",
+                    text = if (isAligned) "وجهة منضبطة" else "اتجاه القبلة ${qiblaTargetAngle.toInt()}°",
                     color = if (isAligned) EmeraldSecondary else TextColorSecondary,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
@@ -529,29 +608,40 @@ fun QiblaCompassFeature(viewModel: EmaniatViewModel) {
             }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        // Simulating Sensor slider
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("محاكاة البوصلة مغرباً ومشرقاً", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("منزلق التوجيه", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        if (!isSensorAvailable) {
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("معايرة يدوية لعدم توفر المستشعر", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("${qiblaTargetAngle.toInt()}° الهدف", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Slider(
+                    value = azimuthAngle,
+                    onValueChange = { azimuthAngle = it; viewModel.triggerHaptic() },
+                    valueRange = 0f..360f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = GoldAccent,
+                        activeTrackColor = GoldAccent,
+                        inactiveTrackColor = CardBorder.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("qibla_simulation_slider")
+                )
             }
-            Slider(
-                value = simulatedAngle,
-                onValueChange = { simulatedAngle = it; viewModel.triggerHaptic() },
-                valueRange = 0f..360f,
-                colors = SliderDefaults.colors(
-                    thumbColor = GoldAccent,
-                    activeTrackColor = GoldAccent,
-                    inactiveTrackColor = CardBorder.copy(alpha = 0.4f)
-                ),
-                modifier = Modifier.fillMaxWidth().testTag("qibla_simulation_slider")
-            )
+        } else {
+            OutlinedButton(
+                onClick = { viewModel.setScreen(AppScreen.QIBLA); viewModel.triggerHaptic() },
+                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Explore, contentDescription = null, tint = GoldAccent)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("فتح شاشة البوصلة الكاملة", color = GoldAccent, fontWeight = FontWeight.Bold)
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))

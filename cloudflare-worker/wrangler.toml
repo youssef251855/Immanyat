@@ -1,0 +1,13 @@
+name = "emaniat-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Non-secret public configuration:
+ALLOWED_ORIGINS = "*"
+SUPPORT_EMAIL = "support@immanyat.com"
+PRIVACY_LAST_UPDATED = "2026-11-14"
+
+# Secrets (NEVER commit actual secrets here — set them via Wrangler CLI):
+#   wrangler secret put GEMINI_API_KEY
+#   wrangler secret put APP_CLIENT_TOKEN          # Optional shared client header guard (matches BuildConfig.BACKEND_CLIENT_TOKEN)

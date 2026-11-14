@@ -15,6 +15,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -47,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.AdhanManager
-import com.example.data.MosqueModel
 import com.example.data.PrayerTimeInfo
 import com.example.data.UpdateManager
 import com.example.data.UpdateInfo
@@ -70,10 +70,16 @@ fun AdhanSettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    
+
+    BackHandler {
+        viewModel.triggerHaptic()
+        onClose()
+    }
+
     var selectedTab by remember { mutableStateOf(0) } // 0: الأوقات والمؤذنين, 1: القبلة والمساجد, 2: الإعدادات والأذكار
     var locationName by remember { mutableStateOf(AdhanManager.getSavedLocationName(context)) }
     var prayerTimesList by remember { mutableStateOf(AdhanManager.calculatePrayerTimesForDate(context, Date())) }
+    var showLocationRationaleDialog by remember { mutableStateOf(false) }
     
     // Auto-update times & countdowns
     LaunchedEffect(Unit) {
@@ -220,12 +226,7 @@ fun AdhanSettingsScreen(
                                 }
                             } catch (e: SecurityException) {}
                         } else {
-                            locationPermissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
-                                )
-                            )
+                            showLocationRationaleDialog = true
                         }
                     },
                     modifier = Modifier
@@ -300,6 +301,48 @@ fun AdhanSettingsScreen(
                     })
                 }
             }
+        }
+
+        if (showLocationRationaleDialog) {
+            AlertDialog(
+                onDismissRequest = { showLocationRationaleDialog = false },
+                containerColor = DarkBackground,
+                title = {
+                    Text(
+                        text = "تحديد موقعك الجغرافي",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "يحتاج تطبيق إيمانيات إلى الوصول إلى موقعك الجغرافي بدقة لحساب مواقيت الصلاة المحلية وتحديد اتجاه القبلة فقط أثناء استخدام التطبيق، ولا يتم مشاركة إحداثياتك أو تتبعك في الخلفية.",
+                        color = TextColorPrimary,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showLocationRationaleDialog = false
+                            locationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldSecondary)
+                    ) {
+                        Text("السماح بالموقع", color = LightWhite, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLocationRationaleDialog = false }) {
+                        Text("اختيار مدينة يدوياً", color = TextColorSecondary)
+                    }
+                }
+            )
         }
     }
 }
@@ -792,8 +835,8 @@ fun CompassAndMosquesTab(
 ) {
     var deviceAzimuth by remember { mutableStateOf(0f) }
     val qiblaDegree = remember { AdhanManager.calculateQiblaDirection(context) }
-    
-    val mosqueList = remember { AdhanManager.getNearestMosques(context) }
+    val savedCoords = remember { AdhanManager.getSavedCoordinates(context) }
+    val savedCityName = remember { AdhanManager.getSavedLocationName(context) }
 
     // Compass Sensor listener
     val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
@@ -999,58 +1042,58 @@ fun CompassAndMosquesTab(
             }
         }
 
-        // --- Nearest Mosque List ---
+        // --- Real Google Maps Nearest Mosques Action ---
         item {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Storefront, contentDescription = "المساجد", tint = GoldAccent, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "المساجد القريبة بمحاذاتك 🏘️",
-                        color = LightWhite,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-
-        items(mosqueList) { mosque ->
             GlassCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(EmeraldMuted.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Mosque, contentDescription = "مسجد", tint = GoldAccent, modifier = Modifier.size(20.dp))
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(text = mosque.name, color = LightWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text(text = mosque.address, color = TextColorSecondary, fontSize = 10.sp)
-                        }
-                    }
-
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(text = "${mosque.distanceMeters} متر", color = EmeraldSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Mosque, contentDescription = "المساجد القريبة", tint = GoldAccent, modifier = Modifier.size(22.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = String.format(Locale.US, "بزاوية %.0f°", mosque.directionDegrees),
-                            color = TextColorSecondary,
-                            fontSize = 9.sp
+                            text = "البحث عن أقرب مسجد عبر خرائط Google 🕌",
+                            color = LightWhite,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                    }
+                    Text(
+                        text = "الموقع المحفوظ حالياً: $savedCityName (${String.format(Locale.US, "%.3f, %.3f", savedCoords.latitude, savedCoords.longitude)})",
+                        color = TextColorSecondary,
+                        fontSize = 11.sp
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.triggerHaptic()
+                            val geoUri = Uri.parse("geo:${savedCoords.latitude},${savedCoords.longitude}?q=${Uri.encode("مسجد")}")
+                            val mapsIntent = Intent(Intent.ACTION_VIEW, geoUri)
+                            val opened = runCatching { context.startActivity(mapsIntent); true }.getOrDefault(false)
+                            if (!opened) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://www.google.com/maps/search/?api=1&query=${savedCoords.latitude},${savedCoords.longitude}+mosque")
+                                        )
+                                    )
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("open_nearest_mosques_map_button")
+                    ) {
+                        Icon(Icons.Default.Map, contentDescription = null, tint = LightWhite, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("عرض المساجد القريبة على الخريطة", color = LightWhite, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
@@ -1338,12 +1381,8 @@ fun SmartSettingsTab(
                     val canExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         alarmMgr?.canScheduleExactAlarms() ?: true
                     } else true
-                    val notifMgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-                    val canFullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        notifMgr?.canUseFullScreenIntent() ?: true
-                    } else true
 
-                    if (!canExactAlarm || !canFullScreen) {
+                    if (!canExactAlarm) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Column(
                             modifier = Modifier
@@ -1355,12 +1394,12 @@ fun SmartSettingsTab(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "تنبيه صلاحيات التشغيل التلقائي للأذان ⚠️",
+                                text = "تنبيه صلاحية المنبهات الدقيقة للأذان ⚠️",
                                 color = Color(0xFFFFB74D),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            if (!canExactAlarm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                                 OutlinedButton(
                                     onClick = {
                                         try {
@@ -1376,24 +1415,6 @@ fun SmartSettingsTab(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text("تفعيل المنبهات الدقيقة للأذان", color = LightWhite, fontSize = 11.sp)
-                                }
-                            }
-                            if (!canFullScreen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                                OutlinedButton(
-                                    onClick = {
-                                        try {
-                                            context.startActivity(
-                                                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                                                    data = Uri.parse("package:${context.packageName}")
-                                                }
-                                            )
-                                        } catch (_: Exception) {}
-                                    },
-                                    border = BorderStroke(0.8.dp, Color(0xFFFFB74D)),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("السماح بظهور شاشة الأذان على شاشة القفل", color = LightWhite, fontSize = 11.sp)
                                 }
                             }
                         }
@@ -1807,7 +1828,6 @@ fun SmartSettingsTab(
         // --- Manual App Update Checks panel ---
         item {
             var isCheckingUpdatesState by remember { mutableStateOf(false) }
-            var updateUrlOverrideText by remember { mutableStateOf(UpdateManager.getUpdateUrl(context)) }
             var manualUpdateInfoState by remember { mutableStateOf<UpdateInfo?>(null) }
             var showManualUpdateDialogState by remember { mutableStateOf(false) }
             var manualUpdateForcedState by remember { mutableStateOf(false) }
@@ -1822,13 +1842,12 @@ fun SmartSettingsTab(
                 )
 
                 Text(
-                    text = "تحقق يدويًا من توفر إصدار أحدث لتنزيل الميزات والتحسينات المبتكرة فور صدورها.",
+                    text = "تحقق يدويًا من توفر إصدار أحدث عبر الخادم الآمن للحصول على التحسينات فور صدورها.",
                     color = TextColorSecondary,
                     fontSize = 10.sp,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                // Current version parameters
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1861,7 +1880,7 @@ fun SmartSettingsTab(
                                 isCheckingUpdatesState = true
                                 scope.launch {
                                     val result = withContext(Dispatchers.IO) {
-                                        UpdateManager.fetchUpdateInfo(context, updateUrlOverrideText.trim())
+                                        UpdateManager.fetchUpdateInfo(context)
                                     }
                                     isCheckingUpdatesState = false
                                     if (result != null) {
@@ -1874,7 +1893,7 @@ fun SmartSettingsTab(
                                             Toast.makeText(context, "إصدارك الحالي محدث ومستقر بالكامل! ✨", Toast.LENGTH_LONG).show()
                                         }
                                     } else {
-                                        Toast.makeText(context, "التحقق فشل! تأكد من وجود إنترنت ورابط التحديث المكتوب.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "تعذر التحقق من التحديثات حالياً. تأكد من اتصالك بالإنترنت.", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             },
@@ -1887,38 +1906,6 @@ fun SmartSettingsTab(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Developer config URL override input fields
-                Text(
-                    text = "رابط ملف تكوين التحديث (JSON URL):",
-                    color = TextColorSecondary,
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-
-                OutlinedTextField(
-                    value = updateUrlOverrideText,
-                    onValueChange = { newVal ->
-                        updateUrlOverrideText = newVal
-                        UpdateManager.setUpdateUrl(context, newVal.trim())
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = LightWhite,
-                        unfocusedTextColor = LightWhite,
-                        focusedBorderColor = GoldAccent,
-                        unfocusedBorderColor = CardBorder,
-                        focusedContainerColor = DarkBackground.copy(alpha = 0.5f),
-                        unfocusedContainerColor = DarkBackground.copy(alpha = 0.3f)
-                    ),
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 10.sp),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                )
             }
 
             if (showManualUpdateDialogState && manualUpdateInfoState != null) {

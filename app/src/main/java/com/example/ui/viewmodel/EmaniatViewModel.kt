@@ -194,6 +194,79 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         triggerHaptic()
     }
 
+    fun updateUserName(newName: String) {
+        val cleaned = newName.trim().take(60)
+        if (cleaned.isNotEmpty()) {
+            userName = cleaned
+            prefs.edit().putString("user_name", cleaned).apply()
+            triggerHaptic()
+        }
+    }
+
+    var isDeletingAccount by mutableStateOf(false)
+        private set
+
+    fun deleteAccountAndAllData(context: Context, onComplete: (Boolean, String) -> Unit) {
+        if (isDeletingAccount) return
+        viewModelScope.launch {
+            isDeletingAccount = true
+            try {
+                if (FirebaseSyncManager.isUserAuthenticated()) {
+                    val cloudDeleteResult = FirebaseSyncManager.deleteUserCloudDataAndAccount(context)
+                    if (cloudDeleteResult.isFailure) {
+                        val err = cloudDeleteResult.exceptionOrNull()?.message
+                            ?: "تعذر حذف الحساب السحابي. تأكد من اتصالك بالإنترنت ثم حاول مجدداً."
+                        onComplete(false, err)
+                        return@launch
+                    }
+                } else {
+                    FirebaseSyncManager.signOut(context)
+                }
+
+                stopRecitationOnly()
+                com.example.service.AdhanPlayerService.stopAthan(context)
+                com.example.service.AdhanAlarmReceiver.stopFallbackAudio()
+
+                withContext(Dispatchers.IO) {
+                    repository.clearAllLocalData()
+                    val appCtx = getApplication<Application>()
+                    appCtx.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE).edit().clear().apply()
+                    appCtx.getSharedPreferences("emaniat_prayers", Context.MODE_PRIVATE).edit().clear().apply()
+                    appCtx.getSharedPreferences("emaniat_khatma_plan_prefs", Context.MODE_PRIVATE).edit().clear().apply()
+                    appCtx.getSharedPreferences("emaniat_adhan_prefs", Context.MODE_PRIVATE).edit().clear().apply()
+
+                    appCtx.cacheDir.listFiles()?.forEach { file ->
+                        if (file.name.startsWith("recitation_")) {
+                            file.delete()
+                        }
+                    }
+                    java.io.File(appCtx.filesDir, "quran").deleteRecursively()
+                    repository.initializeDefaultDataIfRequired()
+                }
+
+                isUserLoggedIn = false
+                userName = "عبد الله"
+                userEmail = ""
+                userId = ""
+                userTitle = "الباحث عن الطاعة"
+                khatmaProgressPages = 142
+                lastSyncTimeString = "غير متزامن"
+                cloudSyncStatusMessage = ""
+                downloadedSurahsSet = emptySet()
+                downloadProgressMap = emptyMap()
+                playbackState = PlaybackState(reader = getReaderLabelFor("afs"))
+                currentScreen = AppScreen.HOME
+
+                onComplete(true, "تم حذف حسابك وجميع بياناتك نهائياً ✅")
+            } catch (e: Exception) {
+                Log.e("EmaniatViewModel", "Error deleting account and local data", e)
+                onComplete(false, "حدث خطأ أثناء حذف البيانات. يرجى المحاولة لاحقاً.")
+            } finally {
+                isDeletingAccount = false
+            }
+        }
+    }
+
     fun syncOrFetchAchievements() {
         if (!FirebaseSyncManager.isUserAuthenticated()) {
             cloudSyncStatusMessage = "سجّل بحساب Google للمزامنة السحابية ☁️"
@@ -789,16 +862,6 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             localFile.delete()
         }
         refreshDownloadedSurahs()
-        triggerHaptic()
-    }
-
-    // Haptics controller
-    var isVipPremiumActive by mutableStateOf(prefs.getBoolean("vip_premium_active", false))
-        private set
-
-    fun setVipPremiumStatus(active: Boolean) {
-        isVipPremiumActive = active
-        prefs.edit().putBoolean("vip_premium_active", active).apply()
         triggerHaptic()
     }
 

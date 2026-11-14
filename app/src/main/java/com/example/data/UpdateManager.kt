@@ -63,14 +63,18 @@ object UpdateManager {
      * Catches and logs all errors, returning null if the fetch fails (supports offline mode gracefully).
      */
     fun fetchUpdateInfo(context: Context, customUrl: String? = null): UpdateInfo? {
-        val urlToUse = customUrl ?: getUpdateUrl(context)
+        val urlToUse = (customUrl ?: getUpdateUrl(context)).trim()
+        if (!urlToUse.startsWith("https://", ignoreCase = true)) {
+            Log.w(TAG, "Rejected non-HTTPS update URL")
+            return null
+        }
         Log.d(TAG, "Fetching update info from: $urlToUse")
-        
+
         val request = Request.Builder()
             .url(urlToUse)
             .header("Cache-Control", "no-cache") // Ensure fresh update check
             .build()
-            
+
         try {
             client.newCall(request).execute().use { response ->
                 if (response.code == 404) {
@@ -83,7 +87,7 @@ object UpdateManager {
                 }
 
                 val bodyString = response.body?.string() ?: return null
-                Log.d(TAG, "Update response details: $bodyString")
+                Log.d(TAG, "Update response details received (${bodyString.length} bytes)")
 
                 val json = JSONObject(bodyString)
                 val latestVersionCode = json.optInt("latestVersionCode", 1)
@@ -92,7 +96,13 @@ object UpdateManager {
                 val isForceUpdate = json.optBoolean("isForceUpdate", false)
                 val changelogAr = json.optString("changelogAr", "")
                 val changelogEn = json.optString("changelogEn", "")
-                val updateUrl = json.optString("updateUrl", "https://play.google.com/store/apps/details?id=com.immanyat.com")
+                val defaultStoreUrl = "https://play.google.com/store/apps/details?id=com.immanyat.com"
+                val rawUpdateUrl = json.optString("updateUrl", defaultStoreUrl).trim()
+                val safeUpdateUrl = if (rawUpdateUrl.startsWith("https://", ignoreCase = true)) {
+                    rawUpdateUrl
+                } else {
+                    defaultStoreUrl
+                }
 
                 return UpdateInfo(
                     latestVersionCode = latestVersionCode,
@@ -101,7 +111,7 @@ object UpdateManager {
                     isForceUpdate = isForceUpdate,
                     changelogAr = changelogAr,
                     changelogEn = changelogEn,
-                    updateUrl = updateUrl
+                    updateUrl = safeUpdateUrl
                 )
             }
         } catch (e: Exception) {
@@ -115,14 +125,17 @@ object UpdateManager {
      */
     fun getUpdateUrl(context: Context): String {
         val prefs = context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("update_config_url", DEFAULT_UPDATE_URL) ?: DEFAULT_UPDATE_URL
+        val saved = prefs.getString("update_config_url", DEFAULT_UPDATE_URL) ?: DEFAULT_UPDATE_URL
+        return if (saved.startsWith("https://", ignoreCase = true)) saved else DEFAULT_UPDATE_URL
     }
 
     /**
-     * Sets or overrides the update check URL (useful for customization or debugging).
+     * Sets or overrides the update check URL only when it uses HTTPS.
      */
     fun setUpdateUrl(context: Context, url: String) {
+        val trimmed = url.trim()
+        if (!trimmed.startsWith("https://", ignoreCase = true)) return
         val prefs = context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString("update_config_url", url).apply()
+        prefs.edit().putString("update_config_url", trimmed).apply()
     }
 }

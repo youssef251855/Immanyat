@@ -6,6 +6,7 @@ import com.example.R
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FieldValue
@@ -276,6 +277,63 @@ object FirebaseSyncManager {
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.GET, userRef.path)
             null
+        }
+    }
+
+    suspend fun deleteUserCloudDataAndAccount(context: Context): Result<Unit> {
+        val user = getCurrentUser()
+        if (user == null) {
+            AuthHelper.signOut(context)
+            return Result.success(Unit)
+        }
+
+        return try {
+            withContext(Dispatchers.IO) {
+                try {
+                    getFirestore(context).collection(USERS_COLLECTION).document(user.uid).delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cloud profile delete warning for ${user.uid}: ${e.message}")
+                    throw e
+                }
+            }
+
+            try {
+                withContext(Dispatchers.IO) {
+                    user.delete().await()
+                }
+            } catch (recentErr: FirebaseAuthRecentLoginRequiredException) {
+                Log.w(TAG, "Recent login required before deleting Firebase user; prompting Google re-auth", recentErr)
+                when (AuthHelper.signInWithGoogle(context)) {
+                    is AuthResult.Success -> {
+                        val refreshedUser = getCurrentUser()
+                        if (refreshedUser != null) {
+                            withContext(Dispatchers.IO) {
+                                refreshedUser.delete().await()
+                            }
+                        }
+                    }
+                    is AuthResult.Cancelled -> {
+                        return@deleteUserCloudDataAndAccount Result.failure(
+                            IllegalStateException("تتطلب عملية حذف الحساب إعادة التحقق عبر Google. تم إلغاء العملية.")
+                        )
+                    }
+                    is AuthResult.Error -> {
+                        return@deleteUserCloudDataAndAccount Result.failure(
+                            IllegalStateException("تتطلب عملية حذف الحساب إعادة توثيق حديثة عبر Google. يرجى المحاولة مرة أخرى.")
+                        )
+                    }
+                }
+            }
+
+            AuthHelper.signOut(context)
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed deleting cloud account and data", e)
+            Result.failure(e)
         }
     }
 

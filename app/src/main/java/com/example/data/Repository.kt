@@ -47,6 +47,9 @@ class EmaniatRepository(private val db: AppDatabase) {
 
     suspend fun updateWorshipLog(name: String, date: String, isCompleted: Boolean) {
         val id = "${name}_$date"
+        val existingLogs = db.worshipDao().getWorshipLogsByDate(date).first()
+        val wasCompleted = existingLogs.find { it.id == id }?.isCompleted ?: false
+
         val log = WorshipLog(
             id = id,
             name = name,
@@ -55,9 +58,17 @@ class EmaniatRepository(private val db: AppDatabase) {
             timeCompleted = if (isCompleted) System.currentTimeMillis() else 0
         )
         db.worshipDao().insertWorshipLog(log)
-        
-        // Recalculate streak / points when daily worship statuses are modified
-        recalculateProgressAndPoints(date)
+
+        val pointDelta = when {
+            !wasCompleted && isCompleted -> 5
+            wasCompleted && !isCompleted -> -5
+            else -> 0
+        }
+        recalculateProgressAndPoints(date, pointDelta)
+    }
+
+    suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
+        db.clearAllTables()
     }
 
     suspend fun saveCompleteStreakData(streak: StreakData) {
@@ -100,7 +111,7 @@ class EmaniatRepository(private val db: AppDatabase) {
         }
     }
 
-    private suspend fun recalculateProgressAndPoints(date: String) {
+    private suspend fun recalculateProgressAndPoints(date: String, pointDelta: Int) {
         // Find logs for today
         val logs = db.worshipDao().getWorshipLogsByDate(date).first()
         val completed = logs.count { it.isCompleted }
@@ -108,12 +119,12 @@ class EmaniatRepository(private val db: AppDatabase) {
         val progress = if (logs.isNotEmpty()) completed.toFloat() / total else 0.0f
 
         val currentStreakInfo = db.streakDao().getStreak().firstOrNull() ?: StreakData()
-        
+
         // Save today's progress
         var streakValue = currentStreakInfo.currentStreak
         var lastDate = currentStreakInfo.lastActiveDate
         val todayStr = getTodayDateString()
-        
+
         // If progress is highly complete (>60%) and was not completed yet today, check streak increment
         if (progress >= 0.57f && lastDate != todayStr) {
             val format = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -141,8 +152,7 @@ class EmaniatRepository(private val db: AppDatabase) {
             lastDate = todayStr
         }
 
-        val gainedPoints = completed * 5 // 5 points per prayer/worship
-        val totalPoints = currentStreakInfo.points + gainedPoints
+        val totalPoints = (currentStreakInfo.points + pointDelta).coerceAtLeast(0)
         val finalLevel = (totalPoints / 500) + 1
 
         db.streakDao().saveStreak(

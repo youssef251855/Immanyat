@@ -47,9 +47,7 @@ import com.example.ui.components.GlassCard
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
-import com.example.api.PayPalApiClient
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -96,7 +94,7 @@ fun DonateScreen(
                 DonateSubTab.values().forEach { tab ->
                     val isSelected = activeSubTab == tab
                     val label = when (tab) {
-                        DonateSubTab.VIP_GOLD -> "🏆 النسخة الذهبية"
+                        DonateSubTab.VIP_GOLD -> "🤝 دعم التطبيق"
                         DonateSubTab.QIBLA_PRAYERS -> "🧭 القبلة والصلوات"
                         DonateSubTab.NAMES_OF_ALLAH -> "✨ أسماء الله"
                         DonateSubTab.ZAKAT_CALC -> "💰 حاسبة الزكاة"
@@ -157,28 +155,12 @@ fun DonateScreen(
 }
 
 // ---------------------------------------------------------
-// FEATURE 1: VIP PLATINUM SUBSCRIPTION & AD BLOCKING
+// FEATURE 1: VOLUNTARY APP DEVELOPMENT SUPPORT
 // ---------------------------------------------------------
 @Composable
 fun VipGoldTab(viewModel: EmaniatViewModel) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
-    val coroutineScope = rememberCoroutineScope()
-    var clickCount by remember { mutableStateOf(getStoredDonationClicks(context)) }
-    var showCheckoutDialog by remember { mutableStateOf(false) }
-    var showPaypalDialog by remember { mutableStateOf(false) }
-    var isGuideExpanded by remember { mutableStateOf(false) }
-    
-    // Pro Subscription states
-    var selectedPlanIndex by remember { mutableStateOf(1) } // Default to Yearly Pro (Best Value)
-    val planNames = listOf("الباقة الشهرية (Pro Monthly)", "الباقة السنوية (Pro Yearly)", "الباقة الماسية (Lifetime Pro)")
-    val planPrices = listOf("4.99$", "19.99$", "49.99$")
-    val planPeriods = listOf("شهر للتقسيط", "سنة كاملة (وفر 65%)", "مدى الحياة (مرة واحدة)")
-    val planDetails = listOf(
-        "مناسب لتجربة الخدمة وسداد الرسوم السحابية لشهر واحد.",
-        "الخيار الأكثر شعبية! دعم مستمر لعام كامل مع ترقية كاملة الفوائد.",
-        "الاستثمار الإيماني الأعظم! دعم دائم للمشروع وفتح المزايا بلا حدود مدى الحياة."
-    )
 
     Column(
         modifier = Modifier
@@ -187,17 +169,10 @@ fun VipGoldTab(viewModel: EmaniatViewModel) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Glowing Golden Card (Subscription Status Display)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(
-                    BorderStroke(
-                        1.5.dp,
-                        if (viewModel.isVipPremiumActive) GoldAccent else Color.Transparent
-                    ),
-                    RoundedCornerShape(20.dp)
-                )
+                .border(BorderStroke(1.dp, GoldAccent.copy(alpha = 0.45f)), RoundedCornerShape(20.dp))
                 .shadow(12.dp, RoundedCornerShape(20.dp)),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceDarkGlass)
@@ -223,974 +198,98 @@ fun VipGoldTab(viewModel: EmaniatViewModel) {
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "التاج الذهبي",
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = "دعم التطبيق",
                             tint = GoldAccent,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(30.dp)
                         )
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = if (viewModel.isVipPremiumActive) "الاشتراك الاحترافي مفعل: خطة PRO 👑" else "باقة إيمانيات الاحترافية (Emaniat Pro) ✨",
+                        text = "نشر الخير والصدقة الجارية 🌿",
                         color = GoldAccent,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = if (viewModel.isVipPremiumActive) {
-                            "جزاك الله خيراً! أنت تستمتع الآن بكامل الميزات الاحترافية والتطبيق خالٍ تماماً من الإعلانات لدعمكم النبيل."
-                        } else {
-                            "اشترك الآن في خطة Pro لإلغاء الإعلانات المنبثقة، وتفعيل التاج الذهبي، والحصول على وصول كامل غير محدود لجميع مزايا التطبيق الذكية."
-                        },
+                        text = "جميع ميزات تطبيق إيمانيات — القرآن الكريم، التسميع والتصحيح الذكي، الأذكار، ومواقيت الصلاة — متاحة مجاناً للجميع دون أي اشتراكات مدفوعة.",
                         color = TextColorPrimary,
-                        fontSize = 11.sp,
-                        lineHeight = 18.sp,
+                        fontSize = 12.sp,
+                        lineHeight = 20.sp,
                         textAlign = TextAlign.Center
                     )
 
-                    if (viewModel.isVipPremiumActive) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(30.dp))
-                                .background(GoldAccent.copy(alpha = 0.15f))
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Active",
-                                tint = GoldAccent,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "حالة الاشتراك: فعال (دعم ذهبي) 🏅",
-                                color = GoldAccent,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = { 
-                                viewModel.setVipPremiumStatus(false)
-                                Toast.makeText(context, "تم تبديل العضوية للمجانية للاختبار والتجربة", Toast.LENGTH_SHORT).show()
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextColorSecondary),
-                            border = BorderStroke(1.dp, CardBorder),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("الرجوع للمجاني لتجربة الدفع مرة أخرى", fontSize = 10.sp)
-                        }
-
-                    } else {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        
-                        // PLAN SELECTOR GRID (3 Plans)
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            for (i in 0..2) {
-                                val isSelected = selectedPlanIndex == i
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isSelected) EmeraldMuted.copy(alpha = 0.25f) else Color.Transparent)
-                                        .border(
-                                            BorderStroke(
-                                                if (isSelected) 1.5.dp else 1.dp,
-                                                if (isSelected) GoldAccent else CardBorder
-                                              ),
-                                            RoundedCornerShape(12.dp)
-                                        )
-                                        .clickable {
-                                            viewModel.triggerHaptic()
-                                            selectedPlanIndex = i
-                                        }
-                                        .padding(12.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            horizontalAlignment = Alignment.End
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                if (i == 1) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .padding(end = 6.dp)
-                                                            .clip(RoundedCornerShape(4.dp))
-                                                            .background(GoldAccent)
-                                                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                                                    ) {
-                                                        Text("الأكثر توفيراً 🔥", color = Color.Black, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                                                    }
-                                                }
-                                                Text(
-                                                    text = planNames[i],
-                                                    color = if (isSelected) GoldAccent else LightWhite,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    textAlign = TextAlign.Right
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = planDetails[i],
-                                                color = TextColorSecondary,
-                                                fontSize = 9.sp,
-                                                textAlign = TextAlign.Right
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.width(12.dp))
-
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text(
-                                                text = planPrices[i],
-                                                color = if (isSelected) GoldAccent else LightWhite,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = planPeriods[i],
-                                                color = TextColorSecondary,
-                                                fontSize = 8.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // PAYPAL PAYMENT EMULATOR TRICOLOR BUTTON
-                        Button(
-                            onClick = {
-                                viewModel.triggerHaptic()
-                                showPaypalDialog = true
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC439)), // Official PayPal Yellow
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Payment,
-                                contentDescription = "PayPal Logo",
-                                tint = Color(0xFF003087) // Official PayPal Dark Blue
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "شراء خطة PRO عبر PayPal الذكي 💳",
-                                color = Color(0xFF003087),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // CREDIT CARD / GOOGLE PLAY BUTTON
-                            Button(
-                                onClick = {
-                                    viewModel.triggerHaptic()
-                                    showCheckoutDialog = true
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                            ) {
-                                Icon(Icons.Default.CreditCard, contentDescription = null, tint = LightWhite, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "الدفع بالبطاقة البنكية / Google Play 💳",
-                                    color = LightWhite,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Perks comparison section
-        Text(
-            text = "المزايا الحصرية لمشتركي خطة Pro 👑",
-            color = GoldAccent,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp),
-            textAlign = TextAlign.Right
-        )
-
-        val perks = listOf(
-            "إيقاف تام وفوري لكافة الإعلانات المنبثقة والبينية في شاشات التطبيق.",
-            "وسام العضو المحترف PRO الذهبي بملفك الشخصي وبطاقة الإحصائيات.",
-            "وصول كامل وغير محدود لجميع معالم الواحة الإيمانية (القبلة، أسماء الله، الحاسبة).",
-            "تسجيل كتابة الأفكار وتدبرات الآيات بنظام الحفظ السحابي اللانهائي.",
-            "المساهمة المباشرة في تمويل سيرفرات المصحف الإلكتروني وصوتيات كبار القراء."
-        )
-
-        perks.forEach { perk ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 5.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = perk,
-                    color = TextColorSecondary,
-                    fontSize = 11.sp,
-                    textAlign = TextAlign.Right,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = EmeraldPrimary,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // DEVELOPER SECTION: EDUCATIONAL PAYPAL ROADMAP GUIDE (Perfect for users and developer testing!)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(BorderStroke(1.dp, if (isGuideExpanded) GoldAccent else CardBorder), RoundedCornerShape(12.dp))
-                .clickable {
-                    viewModel.triggerHaptic()
-                    isGuideExpanded = !isGuideExpanded
-                },
-            colors = CardDefaults.cardColors(containerColor = SurfaceDarkGlass)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Icon(
-                        imageVector = if (isGuideExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Expand",
-                        tint = GoldAccent
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "للمطورين: دليل دمج PayPal حقيقي في الأندرويد 🛠️",
-                            color = GoldAccent,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Right
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Help Guide",
-                            tint = GoldAccent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                if (isGuideExpanded) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "لدمج بوابة الدفع PayPal في تطبيق أندرويد حقيقي لرفعه على جوجل بلاي، اتبع الخطوات البرمجية التالية:",
-                        color = LightWhite,
-                        fontSize = 10.sp,
-                        lineHeight = 16.sp,
-                        textAlign = TextAlign.Right,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Text(
-                        text = "١. إضافة الاعتمادية في build.gradle.kts (App Module):\n" +
-                               "implementation(\"com.paypal.checkout:checkout-sdk:1.2.0\")\n\n" +
-                               "٢. تهيئة الـ SDK في كلاس Application الخاص بالتطبيق:\n" +
-                               "class MyEmaniatApp : Application() {\n" +
-                               "    override fun onCreate() {\n" +
-                               "        super.onCreate()\n" +
-                               "        val config = CheckoutConfig(\n" +
-                               "            application = this,\n" +
-                               "            clientId = \"YOUR_PAYPAL_SANDBOX_CLIENT_ID\",\n" +
-                               "            environment = Environment.SANDBOX,\n" +
-                               "            returnUrl = \"com.aistudio.emaniat://paypalpay\"\n" +
-                               "        )\n" +
-                               "        PayPalCheckout.setConfig(config)\n" +
-                               "    }\n" +
-                               "}\n\n" +
-                               "٣. كتابة دالة الدفع داخل الكومبوزبل (Checkout Click Listener):\n" +
-                               "fun startPayPalPayment(amountValue: String) {\n" +
-                               "    PayPalCheckout.startCheckout(CreateOrder { actions ->\n" +
-                               "        val purchaseUnit = PurchaseUnit.Builder()\n" +
-                               "            .amount(Amount.Builder().value(amountValue).currencyCode(CurrencyCode.USD).build())\n" +
-                               "            .build()\n" +
-                               "        actions.create(Order.Builder().purchaseUnits(listOf(purchaseUnit)).build())\n" +
-                               "    })\n" +
-                               "}\n\n" +
-                               "٤. تسجيل المستمعين (Callbacks) المعتمدين لتحديث خادمك الخاص:\n" +
-                               "PayPalCheckout.registerCallbacks(\n" +
-                               "    onApprove = OnApprove { approval ->\n" +
-                               "        // تم الدفع بنجاح! حدث قاعدة البيانات السحابية\n" +
-                               "        approval.orderActions.capture { result ->\n" +
-                               "            Log.d(\"PayPal\", \"Order captured successfully: \${result.orderId}\")\n" +
-                               "        }\n" +
-                               "    },\n" +
-                               "    onCancel = OnCancel {\n" +
-                               "        // تم إلغاء عملية الدفع من قبل المستخدم\n" +
-                               "    }\n" +
-                               ")",
-                        color = EmeraldSecondary,
-                        fontSize = 9.sp,
-                        lineHeight = 14.sp,
-                        textAlign = TextAlign.Left,
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(DarkBackground)
-                            .border(0.5.dp, CardBorder, RoundedCornerShape(8.dp))
-                            .padding(10.dp)
-                    )
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(EmeraldMuted.copy(alpha = 0.22f))
+                            .border(1.dp, CardBorder, RoundedCornerShape(12.dp))
+                            .padding(14.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "«مَنْ دَلَّ عَلَى خَيْرٍ فَلَهُ مِثْلُ أَجْرِ فَاعِلِهِ»",
+                                color = GoldAccent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "أعظم دعم للتطبيق هو الدعاء للقائمين عليه بظهر الغيب ومشاركته مع الأهل والأصدقاء ليكون صدقةً جاريةً لك.",
+                                color = TextColorSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 18.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
         }
-    }
 
-    // INTERACTIVE PAYPAL ONLINE SANDBOX PORTAL DIALOG
-    if (showPaypalDialog) {
-        var paypalEmail by remember { mutableStateOf("") }
-        var paypalPassword by remember { mutableStateOf("") }
-        var isPaypalProcessing by remember { mutableStateOf(false) }
-        var paypalStep by remember { mutableStateOf(1) } // API: 1: Ready, 2: Linked/Awaiting Capture, 3: Success. Simulated: 1: Login, 2: Review, 3: Success
-        
-        // Real API state holders
-        var realOrderInfo by remember { mutableStateOf<com.example.api.PayPalOrderInfo?>(null) }
-        var paypalAccessToken by remember { mutableStateOf("") }
-        
-        val targetPrice = planPrices[selectedPlanIndex]
-        val targetPlan = planNames[selectedPlanIndex]
-        val isRealApi = PayPalApiClient.isConfigured
+        Spacer(modifier = Modifier.height(16.dp))
 
-        AlertDialog(
-            onDismissRequest = { if (!isPaypalProcessing) showPaypalDialog = false },
-            title = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF003087))
-                        .padding(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "Secure Connection",
-                                tint = Color(0xFFFFC439),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isRealApi) "PayPal API Integration" else "PayPal Secure Simulator",
-                                color = LightWhite,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
-                        Text(
-                            text = "PayPal",
-                            color = Color(0xFFFFC439),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Black
+        Button(
+            onClick = {
+                viewModel.triggerHaptic()
+                runCatching {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            "تطبيق إيمانيات — القرآن الكريم، الأذكار، مواقيت الصلاة، واتجاه القبلة:\nhttps://play.google.com/store/apps/details?id=com.immanyat.com"
                         )
                     }
+                    context.startActivity(Intent.createChooser(shareIntent, "مشاركة تطبيق إيمانيات"))
                 }
             },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (isPaypalProcessing) {
-                        Spacer(modifier = Modifier.height(24.dp))
-                        CircularProgressIndicator(
-                            color = Color(0xFF0079C1),
-                            modifier = Modifier.size(44.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = when (paypalStep) {
-                                1 -> "جاري الاتصال بخادم PayPal الآمن وحجز الفاتورة..."
-                                2 -> "جاري التحقق من حالة الفاتورة وتأكيد تفويض الدفع..."
-                                else -> "تحديث حالة الترخيص بنجاح..."
-                            },
-                            color = TextColorPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                    } else {
-                        if (isRealApi) {
-                            // REAL API INTEGRATION FLOW
-                            when (paypalStep) {
-                                1 -> {
-                                    Text(
-                                        text = "المستلم الأمني: Emaniat Application Inc.",
-                                        color = TextColorSecondary,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        textAlign = TextAlign.Right,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "تفعيل باقة الاحتراف ($targetPlan) حقيقياً بسعر $targetPrice عبر واجهة ربط PayPal المباشرة:",
-                                        color = TextColorPrimary,
-                                        fontSize = 11.sp,
-                                        lineHeight = 18.sp,
-                                        textAlign = TextAlign.Right,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(DarkBackground)
-                                            .border(0.5.dp, CardBorder, RoundedCornerShape(8.dp))
-                                            .padding(12.dp)
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(text = targetPrice, color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                Text(text = "الباقة: $targetPlan", color = LightWhite, fontSize = 11.sp)
-                                            }
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(text = "PayPal REST API v2", color = EmeraldSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                Text(text = "طريقة الإتمام", color = TextColorSecondary, fontSize = 10.sp)
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text(
-                                        text = "انقر على زر 'طلب فاتورة PayPal' لإنشاء سجل معاملة معلق مباشرة في خوادمهم والدفع الآمن.",
-                                        color = TextColorSecondary,
-                                        fontSize = 9.sp,
-                                        lineHeight = 14.sp,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                                2 -> {
-                                    Text(
-                                        text = "تم إنشاء معاملة PayPal المعلقة بنجاح! 💳",
-                                        color = EmeraldSecondary,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        textAlign = TextAlign.Right
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "الرجاء النقر على الزر الأصفر أدناه لإتمام توقيع المعاملة وسدادها في صفحة باي بال الآمنة، ثم عد فوراً إلى التطبيق واضغط على 'تأكيد وتفعيل الاشتراك'.",
-                                        color = TextColorPrimary,
-                                        fontSize = 11.sp,
-                                        lineHeight = 18.sp,
-                                        textAlign = TextAlign.Right,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text(
-                                        text = "معاملة باي بال: ${realOrderInfo?.orderId ?: "غير متوفر"}",
-                                        color = GoldAccent,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    
-                                    Button(
-                                        onClick = {
-                                            realOrderInfo?.approvalUrl?.let { url ->
-                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                context.startActivity(intent)
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC439)),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Payment,
-                                            contentDescription = "Pay Link",
-                                            tint = Color(0xFF003087)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "إتمام الدفع في بوابة PayPal الآمنة 🌐",
-                                            color = Color(0xFF003087),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-                                3 -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(Color(0x1500FF00))
-                                            .border(0.5.dp, Color.Green, RoundedCornerShape(8.dp))
-                                            .padding(12.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "تهانينا الحارة! تم الدفع الفعلي والترقية التلقائية بنجاح! 🎉👑\nرصيد حسابك Emaniat Pro مفعل دائماً.",
-                                            color = EmeraldSecondary,
-                                            fontSize = 12.sp,
-                                            lineHeight = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            // LOCAL SECURE SIMULATION FLOW
-                            when (paypalStep) {
-                                1 -> { // Credentials Step
-                                    Text(
-                                        text = "تسجيل الدخول إلى حساب PayPal للمحاكاة وتفعيل $targetPlan بسعر $targetPrice:",
-                                        color = TextColorPrimary,
-                                        fontSize = 11.sp,
-                                        lineHeight = 18.sp,
-                                        textAlign = TextAlign.Right,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    OutlinedTextField(
-                                        value = paypalEmail,
-                                        onValueChange = { paypalEmail = it },
-                                        label = { Text("البريد الإلكتروني لحساب PayPal") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    OutlinedTextField(
-                                        value = paypalPassword,
-                                        onValueChange = { paypalPassword = it },
-                                        label = { Text("كلمة المرور المشفرة") },
-                                        singleLine = true,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "المستلم: Emaniat Application Inc.",
-                                            color = TextColorSecondary,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(Color(0x20FFA500))
-                                            .border(0.5.dp, GoldAccent.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                                            .padding(10.dp)
-                                    ) {
-                                        Text(
-                                            text = "💡 لتفعيل الدفع والترقية التلقائية الحقيقية عبر حساب باي بال الخاص بك، أدخل PAYPAL_CLIENT_ID و PAYPAL_CLIENT_SECRET في لوحة الأسرار (Secrets) على AI Studio.",
-                                            color = GoldAccent,
-                                            fontSize = 9.sp,
-                                            lineHeight = 14.sp,
-                                            textAlign = TextAlign.Right,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                }
-                                2 -> { // Order Review Step
-                                    Text(
-                                        text = "مراجعة تفاصيل عملية تفويض الدفع الآمنة (المحاكاة):",
-                                        color = GoldAccent,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        textAlign = TextAlign.Right
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(DarkBackground)
-                                            .border(0.5.dp, CardBorder, RoundedCornerShape(8.dp))
-                                            .padding(12.dp)
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(text = targetPrice, color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                Text(text = "الباقة المختارة: $targetPlan", color = LightWhite, fontSize = 11.sp)
-                                            }
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(text = "PayPal Wallet (Sandbox)", color = EmeraldSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                Text(text = "رصيد مصدر الدفع", color = TextColorSecondary, fontSize = 10.sp)
-                                            }
-                                            Divider(modifier = Modifier.padding(vertical = 8.dp), color = CardBorder)
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(text = targetPrice, color = GoldAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                                Text(text = "الإجمالي المستقطع بالدولار", color = GoldAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    Text(
-                                        text = "بالنقر على زر 'تأكيد ودفع' أدناه، ستقوم بإتمام محاكاة تفويض المعاملة والحصول على رخصة Pro بالبرمجة المباشرة.",
-                                        color = TextColorSecondary,
-                                        fontSize = 9.sp,
-                                        lineHeight = 14.sp,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                if (!isPaypalProcessing) {
-                    if (isRealApi) {
-                        // Real payment buttons
-                        if (paypalStep == 1) {
-                            Button(
-                                onClick = {
-                                    viewModel.triggerHaptic()
-                                    isPaypalProcessing = true
-                                    coroutineScope.launch {
-                                        try {
-                                            val token = PayPalApiClient.getAccessToken()
-                                            if (token != null) {
-                                                paypalAccessToken = token
-                                                val cleanPrice = targetPrice.replace("$", "").trim()
-                                                val order = PayPalApiClient.createOrder(token, cleanPrice, targetPlan)
-                                                if (order != null) {
-                                                    realOrderInfo = order
-                                                    paypalStep = 2
-                                                } else {
-                                                    Toast.makeText(context, "فشل إنشاء المعاملة على خادم باي بال.", Toast.LENGTH_LONG).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(context, "فشل المصادقة مع باي بال. تأكد من صحة بيانات API الملقمة في Secrets.", Toast.LENGTH_LONG).show()
-                                            }
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "خطأ بالشبكة: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        } finally {
-                                            isPaypalProcessing = false
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC439))
-                            ) {
-                                Text(
-                                    text = "طلب فاتورة PayPal 🚀",
-                                    color = Color(0xFF003087),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        } else if (paypalStep == 2) {
-                            Button(
-                                onClick = {
-                                    viewModel.triggerHaptic()
-                                    val order = realOrderInfo
-                                    if (order == null) {
-                                        Toast.makeText(context, "لم يتم العثور على معاملة سارية.", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
-                                    isPaypalProcessing = true
-                                    coroutineScope.launch {
-                                        try {
-                                            val captured = PayPalApiClient.captureOrder(paypalAccessToken, order.orderId)
-                                            if (captured) {
-                                                viewModel.setVipPremiumStatus(true)
-                                                paypalStep = 3
-                                                Toast.makeText(context, "تم تأكيد الدفع الفعلي بنجاح وتفعيل رخصة الاحتراف للبرنامج! 🎉👑", Toast.LENGTH_LONG).show()
-                                            } else {
-                                                Toast.makeText(context, "لم نتمكن من التقاط الدفعة. تأكد من إتمام الموافقة والدفع بالرابط أولاً.", Toast.LENGTH_LONG).show()
-                                            }
-                                        } catch (e: Exception) {
-                                            Toast.makeText(context, "خطأ في التحقق والالتقاط: ${e.message}", Toast.LENGTH_SHORT).show()
-                                        } finally {
-                                            isPaypalProcessing = false
-                                        }
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                            ) {
-                                Text(
-                                    text = "تأكيد وتفعيل الاشتراك 👑",
-                                    color = LightWhite,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        } else if (paypalStep == 3) {
-                            Button(
-                                onClick = { showPaypalDialog = false },
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary)
-                            ) {
-                                Text("إغلاق النافذة ☘️", color = LightWhite)
-                            }
-                        }
-                    } else {
-                        // Simulated payment buttons
-                        Button(
-                            onClick = {
-                                if (paypalStep == 1) {
-                                    if (!paypalEmail.contains("@") || paypalPassword.length < 5) {
-                                        Toast.makeText(context, "الرجاء كتابة بريد إلكتروني صالح وكلمة مرور آمنة للمحاكاة", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
-                                    viewModel.triggerHaptic()
-                                    isPaypalProcessing = true
-                                    coroutineScope.launch {
-                                        delay(1500)
-                                        isPaypalProcessing = false
-                                        paypalStep = 2
-                                    }
-                                } else if (paypalStep == 2) {
-                                    viewModel.triggerHaptic()
-                                    isPaypalProcessing = true
-                                    coroutineScope.launch {
-                                        delay(2000)
-                                        isPaypalProcessing = false
-                                        showPaypalDialog = false
-                                        viewModel.setVipPremiumStatus(true)
-                                        Toast.makeText(context, "جزاكم الله خيراً! تم تأكيد تفويض PayPal بنجاح وترقية حسابك إلى باقة PRO الاحترافية مدى الحياة! 🎉👑", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC439))
-                        ) {
-                            Text(
-                                text = if (paypalStep == 1) "متابعة الحساب" else "تأكيد الدفع وشحن رصيد Pro 🚀",
-                                color = Color(0xFF003087),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
-            },
-            dismissButton = {
-                if (!isPaypalProcessing && paypalStep != 3) {
-                    TextButton(onClick = { showPaypalDialog = false }) {
-                        Text("إلغاء المعاملة", color = MutedRed)
-                    }
-                }
-            },
-            containerColor = SurfaceDarkGlass,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.padding(vertical = 12.dp)
-        )
-    }
-
-
-    // Checkout credit card simulation dialog
-    if (showCheckoutDialog) {
-        var cardNumber by remember { mutableStateOf("") }
-        var cardExpiry by remember { mutableStateOf("") }
-        var cardCvv by remember { mutableStateOf("") }
-        var isProcessing by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { if (!isProcessing) showCheckoutDialog = false },
-            title = {
-                Text(
-                    text = "شراء العضوية الاحترافية (محاكاة البطاقة) 💳",
-                    color = GoldAccent,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Right
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Text(
-                        text = "أدخل بيانات بطاقة افتراضية لتفعيل اشتراك PRO فوراً بالدفع الرمزي المحاكي:",
-                        color = TextColorPrimary,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Right,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = cardNumber,
-                        onValueChange = {
-                            if (it.length <= 16 && it.all { char -> char.isDigit() }) cardNumber = it
-                        },
-                        label = { Text("رقم البطاقة (16 رقم)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = cardCvv,
-                            onValueChange = {
-                                if (it.length <= 3 && it.all { char -> char.isDigit() }) cardCvv = it
-                            },
-                            label = { Text("رمز CVV") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        OutlinedTextField(
-                            value = cardExpiry,
-                            onValueChange = {
-                                if (it.length <= 4 && it.all { char -> char.isDigit() }) cardExpiry = it
-                            },
-                            label = { Text("صلاحية تجريبية (MMYY)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    if (isProcessing) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        CircularProgressIndicator(
-                            color = GoldAccent,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .align(Alignment.CenterHorizontally)
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (cardNumber.length < 16) {
-                            Toast.makeText(context, "الرجاء كتابة رقم بطاقة وخصائص صالحة لعملية الترقية", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        viewModel.triggerHaptic()
-                        isProcessing = true
-                        coroutineScope.launch {
-                            delay(1200)
-                            isProcessing = false
-                            showCheckoutDialog = false
-                            viewModel.setVipPremiumStatus(true)
-                            Toast.makeText(context, "تمت الترقية لمحاكاة عملية الدفع بالبطاقة وشحن الترخيص PRO بنجاح! 👑🎉", Toast.LENGTH_LONG).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
-                    enabled = !isProcessing
-                ) {
-                    Text("إتمام الدفع", color = LightWhite)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showCheckoutDialog = false },
-                    enabled = !isProcessing
-                ) {
-                    Text("إلغاء", color = TextColorSecondary)
-                }
-            },
-            containerColor = SurfaceDarkGlass,
-            shape = RoundedCornerShape(16.dp)
-        )
+            colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        ) {
+            Icon(imageVector = Icons.Default.Share, contentDescription = "مشاركة التطبيق", tint = LightWhite)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "انشر التطبيق صدقةً جارية مع أحبابك 📤",
+                color = LightWhite,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -1214,27 +313,67 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
 
     var prayerStreak by remember { mutableStateOf(prefs.getInt("prayer_streak", 0)) }
 
-    // Compass simulation / real device rotation sensor
+    // Real device rotation sensor and calculated Qibla bearing for saved location
+    val qiblaBearing = remember { com.example.data.AdhanManager.calculateQiblaDirection(context).toFloat() }
     var rawAzimuth by remember { mutableStateOf(0f) }
     var isSensorAvailable by remember { mutableStateOf(false) }
 
-    // Manual compass calibration in emulator override
+    // Manual compass fallback when hardware sensor is unavailable
     var manualOffset by remember { mutableStateOf(0f) }
 
     DisposableEffect(Unit) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        val sensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ORIENTATION)
+        val rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val accelSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
+        val magnetSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
+
         val listener = object : SensorEventListener {
+            private val rotationMatrix = FloatArray(9)
+            private val orientationValues = FloatArray(3)
+            private val accelValues = FloatArray(3)
+            private val magnetValues = FloatArray(3)
+            private var hasAccel = false
+            private var hasMagnet = false
+
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event != null) {
-                    rawAzimuth = event.values[0]
+                if (event == null) return
+                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    SensorManager.getOrientation(rotationMatrix, orientationValues)
+                    var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                    if (deg < 0f) deg += 360f
+                    rawAzimuth = deg
                     isSensorAvailable = true
+                } else {
+                    if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                        System.arraycopy(event.values, 0, accelValues, 0, minOf(event.values.size, 3))
+                        hasAccel = true
+                    } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                        System.arraycopy(event.values, 0, magnetValues, 0, minOf(event.values.size, 3))
+                        hasMagnet = true
+                    }
+                    if (hasAccel && hasMagnet) {
+                        if (SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
+                            SensorManager.getOrientation(rotationMatrix, orientationValues)
+                            var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
+                            if (deg < 0f) deg += 360f
+                            rawAzimuth = deg
+                            isSensorAvailable = true
+                        }
+                    }
                 }
             }
+
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-        if (sensorManager != null && sensor != null) {
-            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
+
+        if (sensorManager != null) {
+            if (rotationSensor != null) {
+                sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
+            } else if (accelSensor != null && magnetSensor != null) {
+                sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_UI)
+                sensorManager.registerListener(listener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
+            }
         }
         onDispose {
             sensorManager?.unregisterListener(listener)
@@ -1242,7 +381,7 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
     }
 
     val animatedRotation by animateFloatAsState(
-        targetValue = if (isSensorAvailable) -rawAzimuth else manualOffset,
+        targetValue = if (isSensorAvailable) -rawAzimuth else -manualOffset,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
         label = "compassRotation"
     )
@@ -1307,12 +446,11 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                             Text("W", color = TextColorSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterStart))
                         }
 
-                        // Kaaba icon pointing at local bearing (approx Qibla is 135 degrees from N in some zones)
-                        // This icon is attached to the dial so it remains true.
+                        // Kaaba icon attached to calculated local Qibla bearing from North
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .rotate(135f), // Qibla azimuth from North
+                                .rotate(qiblaBearing),
                             contentAlignment = Alignment.TopCenter
                         ) {
                             Text("🕋", fontSize = 18.sp, modifier = Modifier.padding(top = 18.dp))
@@ -1352,7 +490,7 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = if (isSensorAvailable) "جرى مواءمة البوصلة مع مستشعر الجهاز الحركي" else "محاكاة البوصلة (حرك الشريط لمعايرة القبلة):",
+                    text = if (isSensorAvailable) "تم ضبط البوصلة بمستشعرات الجهاز بدقة" else "الجهاز لا يحتوي على مستشعر بوصلة؛ استخدم المعايرة اليدوية:",
                     color = TextColorSecondary,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center
@@ -1372,7 +510,7 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                 }
 
                 Text(
-                    text = "مؤشر زاوية الانحراف: ${(if (isSensorAvailable) rawAzimuth.toInt() else manualOffset.toInt())}° جهة القبلة",
+                    text = "اتجاه القبلة لموقعك: ${qiblaBearing.toInt()}° | الشمال الحالي: ${(if (isSensorAvailable) rawAzimuth else manualOffset).toInt()}°",
                     color = GoldAccent,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -1922,27 +1060,38 @@ fun ZakatCalculatorTab(viewModel: EmaniatViewModel) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Profit monetization callback
                         Button(
                             onClick = {
                                 viewModel.triggerHaptic()
-                                try {
-                                    val adUrl = "https://www.effectivecpmnetwork.com/wykven1z2g?key=8354f640db8eebe8bf7568da45909e36"
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(adUrl))
-                                    context.startActivity(intent)
-                                    Toast.makeText(context, "النية الصالحة كافية! جزاكم الله خيراً بدعم تصفح الاعلانات.", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {}
+                                runCatching {
+                                    val summary = "ملخص حساب الزكاة — تطبيق إيمانيات\n" +
+                                        "إجمالي المال الخاضع للزكاة: ${totalWealth.toInt()}\n" +
+                                        "نصاب الذهب المقدر (٨٥ جم): ${goldThresholdValue.toInt()}\n" +
+                                        "الزكاة الواجبة (2.5%): ${zakatDue.toInt()}"
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, summary)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "مشاركة ملخص الزكاة"))
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "تسجيل نية المساهمة وتوجيه الدعم الفوري 🚀",
+                                text = "مشاركة ملخص حساب الزكاة 📤",
                                 color = LightWhite,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "تُصرف الزكاة لمستحقيها في المصارف الثمانية الشرعية (سورة التوبة: ٦٠).",
+                            color = TextColorSecondary,
+                            fontSize = 10.sp,
+                            textAlign = TextAlign.Center
+                        )
                     } else {
                         Text(
                             text = "ماليتك لم تبلغ حد النصاب، ولكن الصدقات الطوعية تقيك مصارع السوء وتضاعف الأجور.",
@@ -2183,15 +1332,4 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
             )
         }
     }
-}
-
-// Stored stats helpers
-private fun getStoredDonationClicks(context: Context): Int {
-    val prefs = context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE)
-    return prefs.getInt("adsterra_clicks_count", 0)
-}
-
-private fun saveDonationClicks(context: Context, count: Int) {
-    val prefs = context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE)
-    prefs.edit().putInt("adsterra_clicks_count", count).apply()
 }

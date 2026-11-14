@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +25,7 @@ import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.GlassCard
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
+import com.example.ui.components.PrivacyPolicyDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
 
@@ -38,14 +41,22 @@ data class JourneyStep(
 @Composable
 fun ProfileScreen(
     viewModel: EmaniatViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialTab: Int = 0
 ) {
+    val context = LocalContext.current
     val streakData by viewModel.userStreak.collectAsState()
+    val todayLogs by viewModel.todayWorshipLogs.collectAsState()
 
-    var activeProfileTab by remember { mutableStateOf(0) } // 0: Profile Statistics, 1: Spiritual Journey Map
+    var activeProfileTab by remember { mutableStateOf(initialTab) } // 0: Profile Statistics, 1: Spiritual Journey Map
+    LaunchedEffect(initialTab) {
+        activeProfileTab = initialTab
+    }
 
     var editingName by remember { mutableStateOf(false) }
-    var nameTempInput by remember { mutableStateOf(viewModel.userName) }
+    var nameTempInput by remember(viewModel.userName) { mutableStateOf(viewModel.userName) }
+    var showPrivacyDialog by remember { mutableStateOf(false) }
+    var deleteAccountStep by remember { mutableStateOf(0) } // 0 = hidden, 1 = warning, 2 = final confirm
 
     val points = streakData?.points ?: 250
     val level = streakData?.level ?: 1
@@ -174,10 +185,9 @@ fun ProfileScreen(
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             TextButton(
                                                 onClick = {
-                                                    if (nameTempInput.isNotEmpty()) {
-                                                        viewModel.userName = nameTempInput
+                                                    if (nameTempInput.isNotBlank()) {
+                                                        viewModel.updateUserName(nameTempInput)
                                                         editingName = false
-                                                        viewModel.triggerHaptic()
                                                     }
                                                 }
                                             ) {
@@ -195,22 +205,6 @@ fun ProfileScreen(
                                                 style = MaterialTheme.typography.titleLarge,
                                                 fontWeight = FontWeight.Bold
                                             )
-                                            if (viewModel.isVipPremiumActive) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(Brush.linearGradient(listOf(GoldAccent, Color(0xFFFFA500))))
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "PRO 👑",
-                                                        color = Color.Black,
-                                                        fontSize = 8.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
                                         }
                                         if (viewModel.userEmail.isNotBlank()) {
                                             Text(
@@ -381,35 +375,33 @@ fun ProfileScreen(
 
                         // WORSHIP STATS RADIAL CHARTS CARD Representation info
                         GlassCard(modifier = Modifier.fillMaxWidth()) {
+                            val totalCompletedToday = todayLogs.count { it.isCompleted }
+                            val trackedTotal = if (todayLogs.isNotEmpty()) todayLogs.size else 7
+
                             Text(
-                                text = "مستويات إنجاز الفروض والسنن",
+                                text = "إنجاز الفروض والعبادات اليوم ($totalCompletedToday/$trackedTotal)",
                                 color = GoldAccent,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "تقييم التزامك بالفروض الخمسة والأوراد المساندة",
+                                text = "متابعة حية للصلوات الخمس المسجلة اليوم في صفحة الرئيسية",
                                 color = TextColorSecondary,
                                 fontSize = 11.sp,
                                 modifier = Modifier.padding(bottom = 12.dp)
                             )
 
-                            // 5 Columns representing progress
-                            val elements = listOf(
-                                "الفجر" to 0.85f to "ممتاز",
-                                "الظهر" to 0.9f to "ممتاز",
-                                "العصر" to 0.7f to "جيد",
-                                "المغرب" to 0.95f to "ممتاز",
-                                "العشاء" to 0.6f to "صالح"
-                            )
+                            val logsByName = remember(todayLogs) { todayLogs.associateBy { it.name } }
+                            val prayers = listOf("الفجر", "الظهر", "العصر", "المغرب", "العشاء")
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                elements.forEach { ent ->
-                                    val (nameProg, labelRating) = ent
-                                    val (name, valueProg) = nameProg
+                                prayers.forEach { name ->
+                                    val isDone = logsByName[name]?.isCompleted == true
+                                    val valueProg = if (isDone) 1.0f else 0.0f
+                                    val labelRating = if (isDone) "مؤداة ✅" else "لم تُسجّل"
 
                                     Box(
                                         modifier = Modifier
@@ -420,24 +412,97 @@ fun ProfileScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text(name, color = LightWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text(name, color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             Spacer(modifier = Modifier.height(8.dp))
-                                            
+
                                             Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                                                 CircularProgressIndicator(
                                                     progress = { valueProg },
-                                                    color = EmeraldSecondary,
+                                                    color = if (isDone) EmeraldSecondary else TextColorSecondary.copy(alpha = 0.35f),
                                                     strokeWidth = 3.dp,
                                                     modifier = Modifier.fillMaxSize(),
                                                     trackColor = CardBorder
                                                 )
-                                                Text("${(valueProg * 100).toInt()}%", fontSize = 9.sp, color = GoldAccent, fontWeight = FontWeight.Bold)
+                                                Text(
+                                                    text = if (isDone) "100%" else "0%",
+                                                    fontSize = 9.sp,
+                                                    color = if (isDone) GoldAccent else TextColorSecondary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
                                             }
 
                                             Spacer(modifier = Modifier.height(4.dp))
-                                            Text(labelRating, color = TextColorSecondary, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                                            Text(
+                                                text = labelRating,
+                                                color = if (isDone) EmeraldSecondary else TextColorSecondary,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                textAlign = TextAlign.Center
+                                            )
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // PRIVACY & ACCOUNT DELETION CARD (Google Play Compliance)
+                        GlassCard(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "الخصوصية وإدارة الحساب",
+                                color = GoldAccent,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "اطّلع على سياسة حماية البيانات أو احذف حسابك وجميع بياناتك المحفوظة نهائياً.",
+                                color = TextColorSecondary,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                            )
+
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.triggerHaptic()
+                                    showPrivacyDialog = true
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("profile_privacy_policy_button"),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.5f))
+                            ) {
+                                Icon(Icons.Default.PrivacyTip, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("سياسة الخصوصية وحماية البيانات 🔒", color = GoldAccent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.triggerHaptic()
+                                    deleteAccountStep = 1
+                                },
+                                enabled = !viewModel.isDeletingAccount,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("profile_delete_account_button"),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, MutedRed.copy(alpha = 0.65f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MutedRed)
+                            ) {
+                                if (viewModel.isDeletingAccount) {
+                                    CircularProgressIndicator(color = MutedRed, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("جاري حذف الحساب والبيانات...", color = MutedRed, fontSize = 12.sp)
+                                } else {
+                                    Icon(Icons.Default.DeleteForever, contentDescription = null, tint = MutedRed, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("حذف الحساب وجميع البيانات نهائياً 🗑️", color = MutedRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -580,5 +645,87 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(80.dp)) // padding bottom
         }
+    }
+
+    if (showPrivacyDialog) {
+        PrivacyPolicyDialog(onDismiss = { showPrivacyDialog = false })
+    }
+
+    if (deleteAccountStep == 1) {
+        AlertDialog(
+            onDismissRequest = { deleteAccountStep = 0 },
+            containerColor = SurfaceDarkGlass,
+            shape = RoundedCornerShape(20.dp),
+            icon = {
+                Icon(Icons.Default.WarningAmber, contentDescription = null, tint = MutedRed, modifier = Modifier.size(34.dp))
+            },
+            title = {
+                Text("تحذير: حذف الحساب نهائياً", color = MutedRed, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            },
+            text = {
+                Text(
+                    text = "سيؤدي هذا الإجراء إلى مسح حسابك من السحابة وجميع بياناتك المحفوظة محلياً (الختمة، السبحة، التحديات، وسجل الصلوات) بشكل دائم ولا يمكن التراجع عنه.",
+                    color = TextColorSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { deleteAccountStep = 2 },
+                    colors = ButtonDefaults.buttonColors(containerColor = MutedRed),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("delete_account_step1_confirm")
+                ) {
+                    Text("متابعة الحذف", color = LightWhite, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteAccountStep = 0 }) {
+                    Text("إلغاء", color = TextColorSecondary)
+                }
+            }
+        )
+    } else if (deleteAccountStep == 2) {
+        AlertDialog(
+            onDismissRequest = { if (!viewModel.isDeletingAccount) deleteAccountStep = 0 },
+            containerColor = SurfaceDarkGlass,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Text("تأكيد الحذف النهائي", color = LightWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            },
+            text = {
+                Text(
+                    text = "هل أنت متأكد تماماً من رغبتك في حذف الحساب وكافة البيانات المرتبطة به نهائياً الآن؟",
+                    color = TextColorSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteAccountAndAllData(context) { success, message ->
+                            deleteAccountStep = 0
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    enabled = !viewModel.isDeletingAccount,
+                    colors = ButtonDefaults.buttonColors(containerColor = MutedRed),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("delete_account_final_confirm")
+                ) {
+                    Text("نعم، احذف نهائياً", color = LightWhite, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { deleteAccountStep = 0 },
+                    enabled = !viewModel.isDeletingAccount
+                ) {
+                    Text("تراجع", color = GoldAccent)
+                }
+            }
+        )
     }
 }

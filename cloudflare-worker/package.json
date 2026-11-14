@@ -1,0 +1,12 @@
+{
+  "name": "emaniat-cloudflare-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stateless HTTPS API proxy & Play compliance pages for Emaniat Android app",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/worker.test.js"
+  }
+}

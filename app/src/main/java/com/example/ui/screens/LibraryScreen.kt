@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -64,6 +65,10 @@ fun LibraryScreen(
         } else if (selectedCategory != null) {
             selectedCategory = null
         }
+    }
+
+    BackHandler(enabled = selectedArticle != null || selectedCategory != null) {
+        onBackClick()
     }
 
     Box(modifier = modifier.fillMaxSize()) {

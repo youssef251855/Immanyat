@@ -42,7 +42,8 @@ data class Medal(
 @Composable
 fun ChallengesScreen(
     viewModel: EmaniatViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialTab: Int = 0
 ) {
     val challengesList by viewModel.challenges.collectAsState()
     val streakData by viewModel.userStreak.collectAsState()
@@ -50,7 +51,10 @@ fun ChallengesScreen(
     val level = streakData?.level ?: 1
     val points = streakData?.points ?: 250
 
-    var selectedTabIndex by remember { mutableStateOf(0) } // 0: Challenges, 1: Badges
+    var selectedTabIndex by remember { mutableStateOf(initialTab) } // 0: Challenges, 1: Badges
+    LaunchedEffect(initialTab) {
+        selectedTabIndex = initialTab
+    }
     
     // Custom Medals/Badges
     val medals = remember(level, points) {

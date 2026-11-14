@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -106,11 +107,20 @@ fun QuranScreen(
 
     var searchInput by remember { mutableStateOf("") }
     var selectedSurahForReading by remember { mutableStateOf<Surah?>(null) }
-    
+
+    BackHandler(enabled = selectedSurahForReading != null) {
+        selectedSurahForReading = null
+        viewModel.triggerHaptic()
+    }
+
+    val coroutineScope = rememberCoroutineScope()
+    val prefs = remember { context.getSharedPreferences("emaniat_prefs", android.content.Context.MODE_PRIVATE) }
+    var hasVoiceConsent by remember { mutableStateOf(prefs.getBoolean("voice_recitation_consent", false)) }
+    var showVoiceConsentDialog by remember { mutableStateOf(false) }
+
     // Sub-tab Navigation and AI evaluation state variables
     var activeSubTab by remember { mutableStateOf(0) } // 0 = القراءة والتسميع, 1 = المستمع الصوتي والشيوخ
     var showUpdatesBanner by remember { mutableStateOf(true) }
-    val coroutineScope = rememberCoroutineScope()
 
     var showMemorizationDialog by remember { mutableStateOf(false) }
     var selectedSurahForMemorization by remember { mutableStateOf<Surah?>(null) }
@@ -119,7 +129,7 @@ fun QuranScreen(
     var evaluationResultScore by remember { mutableStateOf<Double?>(null) }
     var evaluationResultStatus by remember { mutableStateOf<String?>(null) }
     var evaluationResultFeedback by remember { mutableStateOf<String?>(null) }
-    
+
     // Voice Recitation (التسميع الصوتي) states
     var memorizationTab by remember { mutableStateOf(0) } // 0 = تسميع صوتي 🎙️, 1 = تسميع كتابي ✍️
     var isRecording by remember { mutableStateOf(false) }
@@ -136,18 +146,40 @@ fun QuranScreen(
         return String.format("%02d:%02d", m, s)
     }
 
+    val deleteAudioFileSafely = {
+        try {
+            recorderPlayer?.let {
+                if (it.isPlaying) it.stop()
+                it.release()
+            }
+        } catch (_: Exception) {
+        } finally {
+            recorderPlayer = null
+            isPlayingRecord = false
+        }
+        try {
+            audioFile?.let { file ->
+                if (file.exists()) file.delete()
+            }
+        } catch (_: Exception) {
+        } finally {
+            audioFile = null
+        }
+    }
+
     val startAudioRecording = {
         try {
             permissionError = null
+            deleteAudioFileSafely()
             val file = java.io.File(context.cacheDir, "recitation_${System.currentTimeMillis()}.m4a")
             audioFile = file
-            
+
             val recorder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 android.media.MediaRecorder(context)
             } else {
                 android.media.MediaRecorder()
             }
-            
+
             recorder.apply {
                 setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
                 setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
@@ -162,7 +194,8 @@ fun QuranScreen(
             viewModel.triggerHaptic()
         } catch (e: Exception) {
             e.printStackTrace()
-            permissionError = "فشل بدء التسجيل الميكروفون. يرجى التحقق من الأذونات وإعادة المحاولة."
+            deleteAudioFileSafely()
+            permissionError = "فشل بدء التسجيل بالميكروفون. يرجى التحقق من الأذونات وإعادة المحاولة."
         }
     }
 
@@ -174,7 +207,7 @@ fun QuranScreen(
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            audioFile = null
+            deleteAudioFileSafely()
         } finally {
             mediaRecorder = null
             isRecording = false
@@ -222,6 +255,20 @@ fun QuranScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaRecorder?.apply {
+                    if (isRecording) stop()
+                    release()
+                }
+            } catch (_: Exception) {}
+            mediaRecorder = null
+            isRecording = false
+            deleteAudioFileSafely()
+        }
+    }
+
     val recordLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -233,18 +280,20 @@ fun QuranScreen(
     }
 
     val handleRecordClick = {
-        val permissionCheck = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        )
-        if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
-            if (isRecording) {
-                stopAudioRecording()
-            } else {
-                startAudioRecording()
-            }
+        if (isRecording) {
+            stopAudioRecording()
+        } else if (!hasVoiceConsent) {
+            showVoiceConsentDialog = true
         } else {
-            recordLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            val permissionCheck = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            )
+            if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
+                startAudioRecording()
+            } else {
+                recordLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
     }
 
@@ -392,8 +441,8 @@ fun QuranScreen(
                 it.id.toString() == searchInput
     }
 
-    // Comprehensive mock/fallback verses for popular Surahs if fully offline
-    val mockVerses = remember {
+    // Fallback verses for essential Surahs when offline without local JSON
+    val fallbackVerses = remember {
         mapOf(
             1 to listOf(
                 "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ",
@@ -466,8 +515,8 @@ fun QuranScreen(
                 if (fetched != null && fetched.isNotEmpty()) {
                     activeSurahVerses = fetched
                 } else {
-                    // Fail over to offline mock/fallback list
-                    val fallback = mockVerses[activeSurah.id]
+                    // Fail over to offline fallback list
+                    val fallback = fallbackVerses[activeSurah.id]
                     if (fallback != null) {
                         activeSurahVerses = fallback
                     } else {
@@ -475,8 +524,8 @@ fun QuranScreen(
                     }
                 }
             } catch (e: Exception) {
-                // Fail over to offline mock/fallback list
-                val fallback = mockVerses[activeSurah.id]
+                // Fail over to offline fallback list
+                val fallback = fallbackVerses[activeSurah.id]
                 if (fallback != null) {
                     activeSurahVerses = fallback
                 } else {
@@ -1576,12 +1625,11 @@ fun QuranScreen(
             )
 
             AlertDialog(
-                onDismissRequest = { 
-                    stopPlayingRecordedVoice()
+                onDismissRequest = {
                     stopAudioRecording()
-                    showMemorizationDialog = false 
+                    deleteAudioFileSafely()
+                    showMemorizationDialog = false
                     recitationText = ""
-                    audioFile = null
                     evaluationResultScore = null
                     evaluationResultStatus = null
                     evaluationResultFeedback = null
@@ -1786,8 +1834,7 @@ fun QuranScreen(
 
                                             IconButton(
                                                 onClick = {
-                                                    stopPlayingRecordedVoice()
-                                                    audioFile = null
+                                                    deleteAudioFileSafely()
                                                 },
                                                 modifier = Modifier
                                                     .size(32.dp)
@@ -1832,7 +1879,7 @@ fun QuranScreen(
                                     Spacer(modifier = Modifier.height(4.dp))
 
                                     Text(
-                                        text = "تسجيلك جاهز الآن للمراجعة الفورية عبر الذكاء الاصطناعي (Gemini). اضغط على زر بدء التدقيق بالذكاء الاصطناعي أدناه للحصول على التقييم.",
+                                        text = "تسجيلك جاهز الآن للمراجعة عبر خادم التقييم الآمن (HTTPS)، وسيتم حذف التسجيل المؤقت مباشرة بعد ظهور النتيجة.",
                                         color = TextColorSecondary,
                                         fontSize = 11.sp,
                                         textAlign = TextAlign.Center
@@ -1841,26 +1888,10 @@ fun QuranScreen(
                             }
                         } else {
                             // WRITTEN RECITATION MODE (التسميع الكتابي)
-                            Button(
-                                onClick = {
-                                    recitationText = if (surah.id == 1) {
-                                        "بسم الله الرحمن الرحيم الحمد لله رب العلمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين اهدنا الصراط المستقیم صراط الذين أنعمت عليهم غير المغضوب عليهم والضالين"
-                                    } else {
-                                        "بسم الله الرحمن الرحيم إنا أعطيناك الكوثر فصلي لربك وانحر إن شانئك هو الأبتر الشريف"
-                                    }
-                                    viewModel.triggerHaptic()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = GoldMuted.copy(alpha = 0.25f)),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("تغذية بنص تسميع تجريبي (للتجربة السريعة) 📝", color = GoldAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-
                             OutlinedTextField(
                                 value = recitationText,
                                 onValueChange = { recitationText = it },
-                                placeholder = { Text("اكتب هنا ما تحفظه من السورة الكريمة أو استخدم الزر أعلاه لتنزيل نص نموذج تجريبي مباشر...", color = TextColorSecondary) },
+                                placeholder = { Text("اكتب هنا ما تحفظه من السورة الكريمة ليتم تدقيقه...", color = TextColorSecondary) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(110.dp),
@@ -1953,12 +1984,11 @@ fun QuranScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         TextButton(
-                            onClick = { 
-                                stopPlayingRecordedVoice()
+                            onClick = {
                                 stopAudioRecording()
-                                showMemorizationDialog = false 
+                                deleteAudioFileSafely()
+                                showMemorizationDialog = false
                                 recitationText = ""
-                                audioFile = null
                                 evaluationResultScore = null
                                 evaluationResultStatus = null
                                 evaluationResultFeedback = null
@@ -1981,22 +2011,25 @@ fun QuranScreen(
                                     evaluationResultScore = null
                                     evaluationResultStatus = null
                                     evaluationResultFeedback = null
-                                    
-                                    val correctText = getSurahFullText(surah.id, localQuranJson, mockVerses)
+
+                                    val correctText = getSurahFullText(surah.id, localQuranJson, fallbackVerses)
                                     val responseJson = if (memorizationTab == 0) {
-                                        // Evaluate AUDIO
-                                        val file = audioFile
-                                        if (file != null && file.exists()) {
-                                            val bytes = file.readBytes()
-                                            val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                                            com.example.api.GeminiApiClient.evaluateAudioMemorization(
-                                                surahName = surah.arabicName,
-                                                correctText = correctText,
-                                                audioBase64 = base64,
-                                                mimeType = "audio/mp4"
-                                            )
-                                        } else {
-                                            """{"score":0.0,"status":"ملف مفقود","feedback":"نعتذر، لم يتم العثور على تلاوتك الصوتية المسجلة."}"""
+                                        try {
+                                            val file = audioFile
+                                            if (file != null && file.exists()) {
+                                                val bytes = file.readBytes()
+                                                val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                                                com.example.api.GeminiApiClient.evaluateAudioMemorization(
+                                                    surahName = surah.arabicName,
+                                                    correctText = correctText,
+                                                    audioBase64 = base64,
+                                                    mimeType = "audio/mp4"
+                                                )
+                                            } else {
+                                                """{"score":0.0,"status":"ملف مفقود","feedback":"نعتذر، لم يتم العثور على تلاوتك الصوتية المسجلة."}"""
+                                            }
+                                        } finally {
+                                            deleteAudioFileSafely()
                                         }
                                     } else {
                                         // Evaluate TEXT
@@ -2006,7 +2039,7 @@ fun QuranScreen(
                                             recitationText = recitationText
                                         )
                                     }
-                                    
+
                                     try {
                                         val cleanJson = responseJson.trim()
                                             .replace("```json", "")
@@ -2019,7 +2052,7 @@ fun QuranScreen(
                                     } catch (e: Exception) {
                                         evaluationResultScore = 0.0
                                         evaluationResultStatus = "تنبيه الفحص ⚠️"
-                                        evaluationResultFeedback = "نعتذر يا طيب، واجهتنا مشكلة في معالجة نتيجة التسميع الحالية. يرجى إعادة المحاولة والتأكد من جودة التسجيل أو الاتصال بالإنترنت.\n\nالتفاصيل: $responseJson"
+                                        evaluationResultFeedback = "نعتذر يا طيب، واجهتنا مشكلة في معالجة نتيجة التسميع الحالية. يرجى إعادة المحاولة والتأكد من الاتصال بالإنترنت."
                                     } finally {
                                         isEvaluating = false
                                     }
@@ -2036,14 +2069,74 @@ fun QuranScreen(
                 }
             )
         }
+
+        if (showVoiceConsentDialog) {
+            AlertDialog(
+                onDismissRequest = { showVoiceConsentDialog = false },
+                containerColor = SurfaceDarkGlass,
+                shape = RoundedCornerShape(20.dp),
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "إشعار تسجيل الصوت للتسميع",
+                        tint = GoldAccent,
+                        modifier = Modifier.size(32.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "إشعار الخصوصية قبل التسميع الصوتي",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = "لتقييم حفظك وتصحيح التلاوة، سيقوم التطبيق بتسجيل صوتك عند ضغطك على زر التسجيل وإرسال المقطع عبر اتصال مشفّر (HTTPS) إلى خدمة التحليل الذكي.\n\n• لا يتم تسجيل الصوت في الخلفية إطلاقاً.\n• تُحذف الملفات الصوتية المؤقتة فور انتهاء التقييم ولا يتم تخزينها على الخادم.",
+                        color = TextColorSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 19.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            prefs.edit().putBoolean("voice_recitation_consent", true).apply()
+                            hasVoiceConsent = true
+                            showVoiceConsentDialog = false
+                            val permissionCheck = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            )
+                            if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
+                                startAudioRecording()
+                            } else {
+                                recordLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("accept_voice_consent_button")
+                    ) {
+                        Text("أوافق وأبدأ التسجيل", color = LightWhite, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showVoiceConsentDialog = false }) {
+                        Text("إلغاء", color = TextColorSecondary)
+                    }
+                }
+            )
+        }
     }
 }
 
 // Top level helper structures to hold Sheikh parameters and retrieve verses
 data class SheikhReciter(val id: String, val name: String, val description: String, val avatarChar: String)
 
-fun getSurahFullText(surahId: Int, localJson: Map<Int, List<String>>, mockVerses: Map<Int, List<String>>): String {
-    val verses = localJson[surahId] ?: mockVerses[surahId]
+fun getSurahFullText(surahId: Int, localJson: Map<Int, List<String>>, fallbackVerses: Map<Int, List<String>>): String {
+    val verses = localJson[surahId] ?: fallbackVerses[surahId]
     return if (verses != null && verses.isNotEmpty()) {
         verses.joinToString(separator = " \n ")
     } else {

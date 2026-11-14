@@ -1,0 +1,234 @@
+Signing Release APK with alias: *** (fallback=false)
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.3.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Calculating task graph as no cached configuration is available for tasks: assembleRelease
+> Task :app:preBuild UP-TO-DATE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:processReleaseGoogleServices FROM-CACHE
+> Task :app:extractProguardFiles
+> Task :app:generateReleaseResources FROM-CACHE
+> Task :app:generateReleaseBuildConfig
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:packageReleaseResources
+> Task :app:processReleaseNavigationResources FROM-CACHE
+> Task :app:parseReleaseLocalResources FROM-CACHE
+> Task :app:generateReleaseRFile FROM-CACHE
+> Task :app:javaPreCompileRelease FROM-CACHE
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:compileReleaseNavigationResources FROM-CACHE
+> Task :app:mergeReleaseNativeLibs
+> Task :app:checkReleaseAarMetadata
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease FROM-CACHE
+
+> Task :app:stripReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libdatastore_shared_counter.so. Run with --info option to learn more.
+
+> Task :app:extractReleaseNativeSymbolTables
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:desugarReleaseFileDependencies
+> Task :app:mergeReleaseStartupProfile
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:processReleaseManifestForPackage
+> Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:collectReleaseDependencies
+> Task :app:sdkReleaseDependencyData
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:mergeReleaseResources
+> Task :app:processReleaseResources
+> Task :app:optimizeReleaseResources
+> Task :app:kspReleaseKotlin
+> Task :app:mergeExtDexRelease
+
+> Task :app:compileReleaseKotlin
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/MainActivity.kt:212:61 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/MainActivity.kt:292:77 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/MainActivity.kt:294:80 'val Icons.Filled.LibraryBooks: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.LibraryBooks.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:20:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:21:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:26:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:27:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:32:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:37:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:42:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:47:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:52:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/GeminiClient.kt:57:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/PayPalApiClient.kt:81:67 Java type mismatch: inferred type is 'Nothing?', but 'String' was expected.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:16:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:17:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:18:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:23:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:24:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:25:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:26:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:27:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:32:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:33:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/api/QuranApiClient.kt:34:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to property.
+- To opt in to applying to both value parameter and property, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/data/AppDatabase.kt:37:18 'fun fallbackToDestructiveMigration(): RoomDatabase.Builder<AppDatabase>' is deprecated. Replace by overloaded version with parameter to indicate if all tables should be dropped or not.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/service/AdhanAlarmReceiver.kt:284:57 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/service/AdhanPlayerService.kt:426:49 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanAlarmScreen.kt:46:64 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanAlarmScreen.kt:47:71 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanAlarmScreen.kt:336:57 'val Icons.Filled.VolumeMute: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeMute.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanSettingsScreen.kt:112:77 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanSettingsScreen.kt:1188:72 'val Icons.Filled.VolumeMute: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeMute.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanSettingsScreen.kt:1188:102 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanSettingsScreen.kt:1226:44 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AdhanSettingsScreen.kt:1428:48 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/AzkarScreen.kt:224:74 'val Icons.Outlined.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/DonateScreen.kt:910:45 'fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/DonateScreen.kt:1226:61 'static field TYPE_ORIENTATION: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/DonateScreen.kt:2127:58 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/DonateScreen.kt:2143:58 'val Icons.Filled.ArrowForward: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowForward.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/HomeScreen.kt:263:69 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/HomeScreen.kt:505:53 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/HomeScreen.kt:1007:21 'fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/HomeScreen.kt:1074:57 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/HomeScreen.kt:1128:53 'val Icons.Filled.LibraryBooks: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.LibraryBooks.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/KhatmaPlanView.kt:196:44 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/KhatmaPlanView.kt:222:57 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/LibraryScreen.kt:347:77 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/LibraryScreen.kt:506:94 'val Icons.Filled.LibraryBooks: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.LibraryBooks.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/LibraryScreen.kt:507:97 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/OasisScreen.kt:230:132 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/OasisScreen.kt:311:53 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/OasisScreen.kt:733:17 'fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/OasisScreen.kt:1190:29 'fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/OasisScreen.kt:1957:13 'fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/ProfileScreen.kt:325:33 Condition is always 'true'.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QiblaCompassScreen.kt:124:64 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QiblaCompassScreen.kt:145:100 'static field TYPE_ORIENTATION: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QiblaCompassScreen.kt:163:56 'static field TYPE_ORIENTATION: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QiblaCompassScreen.kt:221:53 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:148:31 'constructor(): MediaRecorder' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:547:69 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:866:64 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:892:64 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:1279:85 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:1437:108 'val Icons.Filled.VolumeOff: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeOff.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:1437:137 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/QuranScreen.kt:1540:122 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/TasbihScreen.kt:259:75 'val Icons.Outlined.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/TasbihScreen.kt:259:103 'val Icons.Filled.VolumeMute: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeMute.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/VideosScreen.kt:559:78 'val Icons.Filled.VolumeOff: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeOff.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/VideosScreen.kt:559:107 'val Icons.Filled.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/ZakatCalculatorScreen.kt:144:53 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/screens/ZakatCalculatorScreen.kt:168:54 'val Icons.Outlined.HelpOutline: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.HelpOutline.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/viewmodel/EmaniatViewModel.kt:231:76 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/viewmodel/EmaniatViewModel.kt:260:72 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/ui/viewmodel/EmaniatViewModel.kt:807:79 'static field VIBRATOR_SERVICE: String' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/Immanyat/Immanyat/app/src/main/java/com/example/widget/PrayerTimesWidgetProvider.kt:34:64 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+
+> Task :app:processReleaseJavaRes
+> Task :app:mergeReleaseJavaResource
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:dexBuilderRelease
+> Task :app:mergeReleaseGlobalSynthetics
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease
+> Task :app:lintVitalRelease
+> Task :app:packageRelease
+> Task :app:assembleRelease
+> Task :app:createReleaseApkListingFileRedirect
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/release_build-1794588359515.json
+
+BUILD SUCCESSFUL in 1m 29s
+52 actionable tasks: 44 executed, 8 from cache
+Configuration cache entry stored.

@@ -51,10 +51,9 @@ jobs:
       - name: Prepare Environment & Debug Keystore
         id: prep
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
+          BACKEND_CLIENT_TOKEN: ${{ secrets.BACKEND_CLIENT_TOKEN }}
           STARTIO_APP_ID: ${{ secrets.STARTIO_APP_ID }}
-          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
-          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
@@ -67,17 +66,14 @@ jobs:
           if [ ! -f .env ]; then
             cp .env.example .env
           fi
-          if [ -n "$GEMINI_API_KEY" ]; then
-            sed -i "s|^GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|" .env
+          if [ -n "$BACKEND_BASE_URL" ]; then
+            sed -i "s|^BACKEND_BASE_URL=.*|BACKEND_BASE_URL=$BACKEND_BASE_URL|" .env
+          fi
+          if [ -n "$BACKEND_CLIENT_TOKEN" ]; then
+            sed -i "s|^BACKEND_CLIENT_TOKEN=.*|BACKEND_CLIENT_TOKEN=$BACKEND_CLIENT_TOKEN|" .env
           fi
           if [ -n "$STARTIO_APP_ID" ]; then
             sed -i "s|^STARTIO_APP_ID=.*|STARTIO_APP_ID=$STARTIO_APP_ID|" .env
-          fi
-          if [ -n "$PAYPAL_CLIENT_ID" ]; then
-            sed -i "s|^PAYPAL_CLIENT_ID=.*|PAYPAL_CLIENT_ID=$PAYPAL_CLIENT_ID|" .env
-          fi
-          if [ -n "$PAYPAL_CLIENT_SECRET" ]; then
-            sed -i "s|^PAYPAL_CLIENT_SECRET=.*|PAYPAL_CLIENT_SECRET=$PAYPAL_CLIENT_SECRET|" .env
           fi
 
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
@@ -151,8 +147,18 @@ jobs:
             fi
           fi
 
+      - name: Run Unit & Pre-Launch Audit Tests
+        run: ./gradlew testDebugUnitTest --tests "com.example.ExampleUnitTest" --tests "com.example.ExampleRobolectricTest" --tests "com.example.PreLaunchAuditTest" --no-daemon
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Print Debug APK Signing Fingerprints
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          DEBUG_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
+          echo "### Debug APK Certificate" >> "$GITHUB_STEP_SUMMARY"
+          "$APKSIGNER" verify --print-certs "$DEBUG_APK" | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -244,6 +250,10 @@ jobs:
               --out app/build/outputs/apk/release/emaniat-release-signed.apk \
               "$UNSIGNED_APK"
           fi
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          echo "### Release APK Certificate (fallback=$USE_FALLBACK)" >> "$GITHUB_STEP_SUMMARY"
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/emaniat-release-signed.apk | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Clean Up Release Keystore
         if: always()

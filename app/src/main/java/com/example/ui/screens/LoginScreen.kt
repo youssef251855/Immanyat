@@ -30,6 +30,7 @@ import androidx.core.content.ContextCompat
 import com.example.data.AuthHelper
 import com.example.data.AuthResult
 import com.example.ui.components.IslamicOrnamentDivider
+import com.example.ui.components.PrivacyPolicyDialog
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
 import kotlinx.coroutines.launch
@@ -45,8 +46,10 @@ fun LoginScreen(
 
     var isGoogleLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showWebFallbackOption by remember { mutableStateOf(false) }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
+    var showPrivacyDialog by remember { mutableStateOf(false) }
     var tempLoggedInName by remember { mutableStateOf("") }
     var tempLoggedInEmail by remember { mutableStateOf("") }
     var tempLoggedInUid by remember { mutableStateOf("") }
@@ -99,20 +102,48 @@ fun LoginScreen(
 
     // Interactive Google Sign-In handling
     val handleGoogleSignIn = {
-        errorMessage = null
-        isGoogleLoading = true
-        coroutineScope.launch {
-            val result = AuthHelper.signInWithGoogle(context)
-            isGoogleLoading = false
-            when (result) {
-                is AuthResult.Success -> {
-                    finalizeLogin(result.displayName, result.email, result.user?.uid ?: "")
+        if (!isGoogleLoading) {
+            errorMessage = null
+            showWebFallbackOption = false
+            isGoogleLoading = true
+            coroutineScope.launch {
+                val result = AuthHelper.signInWithGoogle(context)
+                isGoogleLoading = false
+                when (result) {
+                    is AuthResult.Success -> {
+                        finalizeLogin(result.displayName, result.email, result.user?.uid ?: "")
+                    }
+                    is AuthResult.Cancelled -> {
+                        showWebFallbackOption = true
+                        errorMessage = "تم إلغاء نافذة اختيار الحساب أو تعذر التحقق من شهادة التطبيق على الجهاز. يمكنك إعادة المحاولة أو المتابعة عبر المتصفح."
+                    }
+                    is AuthResult.Error -> {
+                        showWebFallbackOption = true
+                        errorMessage = result.message
+                    }
                 }
-                is AuthResult.Cancelled -> {
-                    errorMessage = "تم إلغاء تسجيل الدخول. يرجى اختيار حساب للمتابعة."
-                }
-                is AuthResult.Error -> {
-                    errorMessage = result.message
+            }
+        }
+    }
+
+    val handleWebGoogleSignIn = {
+        if (!isGoogleLoading) {
+            errorMessage = null
+            isGoogleLoading = true
+            coroutineScope.launch {
+                val result = AuthHelper.signInWithGoogleWebFallback(context)
+                isGoogleLoading = false
+                when (result) {
+                    is AuthResult.Success -> {
+                        showWebFallbackOption = false
+                        finalizeLogin(result.displayName, result.email, result.user?.uid ?: "")
+                    }
+                    is AuthResult.Cancelled -> {
+                        errorMessage = "تم إلغاء تسجيل الدخول عبر المتصفح."
+                    }
+                    is AuthResult.Error -> {
+                        errorMessage = result.message
+                    }
                 }
             }
         }
@@ -196,14 +227,16 @@ fun LoginScreen(
 
                 // Error Message if any
                 if (errorMessage != null) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 14.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color(0xFFFF6B6B).copy(alpha = 0.12f))
                             .border(0.8.dp, Color(0xFFFF6B6B).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                            .padding(10.dp)
+                            .padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
                             text = errorMessage ?: "",
@@ -212,6 +245,35 @@ fun LoginScreen(
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (showWebFallbackOption) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.triggerHaptic()
+                                    handleWebGoogleSignIn()
+                                },
+                                enabled = !isGoogleLoading,
+                                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.7f)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .testTag("google_web_fallback_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInBrowser,
+                                    contentDescription = "تسجيل الدخول عبر المتصفح",
+                                    tint = GoldAccent,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "المتابعة بحساب Google عبر المتصفح 🌐",
+                                    color = GoldAccent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -299,8 +361,31 @@ fun LoginScreen(
                         fontSize = 12.sp
                     )
                 }
+
+                TextButton(
+                    onClick = {
+                        viewModel.triggerHaptic()
+                        showPrivacyDialog = true
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("login_privacy_policy_button")
+                ) {
+                    Text(
+                        text = "سياسة الخصوصية وحماية البيانات 🔒",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
+    }
+
+    if (showPrivacyDialog) {
+        PrivacyPolicyDialog(onDismiss = { showPrivacyDialog = false })
     }
 
     // Permission Dialog

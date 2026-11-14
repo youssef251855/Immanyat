@@ -1,10 +1,8 @@
 package com.example.ui.screens
 
 import android.view.ViewGroup
-import android.widget.FrameLayout
-import androidx.annotation.OptIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,17 +11,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -32,12 +27,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.ui.components.ElegantBackgroundPattern
-import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
@@ -95,95 +92,9 @@ fun VideosScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val sharedPrefs = remember { context.getSharedPreferences("emaniat_prefs", android.content.Context.MODE_PRIVATE) }
-    var currentStartId by remember { mutableStateOf(sharedPrefs.getString("startio_app_id", "") ?: "") }
-    var showIdDialog by remember { mutableStateOf(false) }
-    
-    // START.IO APP ID CONFIGURATION DIALOG
-    if (showIdDialog) {
-        var tempIdText by remember { mutableStateOf(currentStartId) }
-        AlertDialog(
-            onDismissRequest = { showIdDialog = false },
-            title = {
-                Text(
-                    text = "إعداد معرف إعلانات Start.io",
-                    color = GoldAccent,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Right,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Text(
-                        text = "الرجاء إدخال معرّف تطبيق Start.io الخاص بك لتفعيل الإعلانات المخصصة وحفظ الأرباح:",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Right,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = tempIdText,
-                        onValueChange = { tempIdText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        placeholder = {
-                            Text(
-                                "مثال: 200676644",
-                                color = TextColorSecondary.copy(alpha = 0.5f),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = GoldAccent,
-                            unfocusedBorderColor = CardBorder,
-                            cursorColor = GoldAccent
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "* يتطلب تغيير المعرّف إعادة تشغيل التطبيق لتفعيله بالكامل.",
-                        color = EmeraldMuted,
-                        fontSize = 10.sp,
-                        textAlign = TextAlign.Right,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        sharedPrefs.edit().putString("startio_app_id", tempIdText.trim()).apply()
-                        currentStartId = tempIdText.trim()
-                        showIdDialog = false
-                        android.widget.Toast.makeText(context, "تم حفظ معرف Start.io بنجاح! الرجاء إعادة تشغيل التطبيق لتطبيقه.", android.widget.Toast.LENGTH_LONG).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldMuted)
-                ) {
-                    Text("حفظ المعرّف", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showIdDialog = false }) {
-                    Text("إلغاء", color = Color.White)
-                }
-            },
-            containerColor = SurfaceDarkGlass,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
+    var isFullscreen by remember { mutableStateOf(false) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var retryTrigger by remember { mutableStateOf(0) }
 
     var selectedCategory by remember { mutableStateOf(0) } // 0: غزوة بدر الكبرى, 1: غزوة أحد العظيمة
     
@@ -239,27 +150,36 @@ fun VideosScreen(
     var exoPlayerInstance by remember { mutableStateOf<ExoPlayer?>(null) }
 
     // Initialize/release ExoPlayer safely
-    DisposableEffect(activeVideo) {
+    DisposableEffect(activeVideo, retryTrigger) {
         // Automatically pause ongoing Quran recitation to avoid sound overlapping!
         viewModel.pauseQuranRecitation()
 
         isPlaying = false
         currentProgress = 0f
         runningTime = "00:00"
+        playerError = null
 
         val player = ExoPlayer.Builder(context).build().apply {
             val mediaItem = MediaItem.fromUri(activeVideo.videoUrl)
             setMediaItem(mediaItem)
             prepare()
             volume = if (isMuted) 0f else 1f
-            
+
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(playing: Boolean) {
                     isPlaying = playing
+                    if (playing) {
+                        playerError = null
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    isPlaying = false
+                    playerError = "تعذر تحميل المقطع المرئي. تأكد من اتصالك بالإنترنت ثم حاول مجدداً."
                 }
             })
         }
-        
+
         exoPlayerInstance = player
 
         onDispose {
@@ -309,40 +229,19 @@ fun VideosScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    IconButton(
-                        onClick = { showIdDialog = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "معرف Start.io",
-                            tint = GoldAccent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        IslamicStarStarIcon(modifier = Modifier.size(16.dp), color = GoldAccent)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "المحراب المرئي والغزوات التاريخية",
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        IslamicStarStarIcon(modifier = Modifier.size(16.dp), color = GoldAccent)
-                    }
-                    
-                    // Simple balance spacer matching IconButton's size
-                    Spacer(modifier = Modifier.size(36.dp))
+                    IslamicStarStarIcon(modifier = Modifier.size(16.dp), color = GoldAccent)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "المحراب المرئي والغزوات التاريخية",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IslamicStarStarIcon(modifier = Modifier.size(16.dp), color = GoldAccent)
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -351,30 +250,6 @@ fun VideosScreen(
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(EmeraldMuted.copy(alpha = 0.2f))
-                        .border(0.5.dp, EmeraldMuted.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(EmeraldMuted)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "جاري تفعيل وعرض قائمة الفيديوهات من ملف videos.json المرفوع ✅",
-                        color = EmeraldMuted,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
             }
 
             // INNER CATEGORY TABS
@@ -457,8 +332,43 @@ fun VideosScreen(
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Ambient Overlay styling when not playing / preview overlay
-                        if (!isPlaying && currentProgress < 0.02f) {
+                        // Ambient Overlay or Playback Error UI
+                        if (playerError != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(DarkBackground.copy(alpha = 0.92f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.WifiOff,
+                                        contentDescription = "خطأ في التشغيل",
+                                        tint = MutedRed,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = playerError ?: "",
+                                        color = LightWhite,
+                                        fontSize = 11.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { retryTrigger++ },
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.testTag("retry_video_button")
+                                    ) {
+                                        Text("إعادة المحاولة", color = LightWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        } else if (!isPlaying && currentProgress < 0.02f) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -588,12 +498,13 @@ fun VideosScreen(
                                 )
                             }
 
-                            // Fullscreen icon (simulated preview or notify feedback)
+                            // Fullscreen icon
                             IconButton(
                                 onClick = {
-                                    // Custom user feedback toast
-                                    android.widget.Toast.makeText(context, "تم تفعيل ملء الشاشة التلقائي", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                                    isFullscreen = true
+                                    viewModel.triggerHaptic()
+                                },
+                                modifier = Modifier.testTag("video_fullscreen_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Fullscreen,
@@ -784,53 +695,50 @@ fun VideosScreen(
                 }
             }
 
-            if (!viewModel.isVipPremiumActive) {
-                // SPONSORED START.IO AD SECTION
-                IslamicOrnamentDivider(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(10.dp)
-                        .padding(vertical = 1.dp)
+        }
+    }
+
+    if (isFullscreen) {
+        Dialog(
+            onDismissRequest = { isFullscreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            BackHandler { isFullscreen = false }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = exoPlayerInstance
+                            useController = true
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        }
+                    },
+                    update = { view: PlayerView ->
+                        view.player = exoPlayerInstance
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
 
-                // Start.io Banner Ad Container
-                Column(
+                IconButton(
+                    onClick = { isFullscreen = false },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .background(SurfaceDarkGlass)
-                        .border(BorderStroke(0.5.dp, CardBorder))
-                        .padding(vertical = 4.dp, horizontal = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                        .testTag("close_fullscreen_video_button")
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(GoldAccent)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "مساهمة ومساندة للتطبيق • إعلان برعاية Start.io",
-                            color = GoldAccent,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(GoldAccent)
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Icon(
+                        imageVector = Icons.Default.FullscreenExit,
+                        contentDescription = "إغلاق ملء الشاشة",
+                        tint = GoldAccent
+                    )
                 }
             }
         }
