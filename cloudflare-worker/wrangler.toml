@@ -1,6 +1,16 @@
 name = "emaniat-api"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
+workers_dev = true
+
+# Cloudflare Workers Observability (metadata & error rates only; audio payloads are never logged)
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# Optional CPU limit (available on Cloudflare Workers Paid plans only; keep commented on Free tier)
+# [limits]
+# cpu_ms = 50
 
 [vars]
 # Non-secret public configuration:

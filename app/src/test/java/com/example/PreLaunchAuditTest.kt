@@ -110,4 +110,61 @@ class PreLaunchAuditTest {
             assertTrue(json.getString("status").contains("غير مهيأة"))
         }
     }
+
+    @Test
+    fun compassMath_handles_wraparound_and_circular_smoothing_cleanly() {
+        // Crossing North from 358 deg to 2 deg should move +4 deg (to 362), NOT -356 deg
+        val unwrappedUp = com.example.data.CompassMath.unwrapAngle(358f, 2f)
+        assertEquals(362f, unwrappedUp, 0.001f)
+
+        // Crossing North backwards from 362 deg (equiv to 2 deg) to 357 deg should move -5 deg (to 357)
+        val unwrappedDown = com.example.data.CompassMath.unwrapAngle(362f, 357f)
+        assertEquals(357f, unwrappedDown, 0.001f)
+
+        // Circular low-pass filter across 350 -> 10 should move through 0 deg (not backwards through 180)
+        val smoothed = com.example.data.CompassMath.circularLowPassFilter(350f, 10f, alpha = 0.5f)
+        assertEquals(0f, smoothed, 0.001f)
+    }
+
+    @Test
+    fun hadithCollection_has_50_authentic_hadiths_with_narrators_and_sources() {
+        val all = com.example.data.HadithCollection.ALL_50_HADITHS
+        assertEquals(50, all.size)
+
+        val ids = all.map { it.id }.toSet()
+        assertEquals(50, ids.size)
+
+        all.forEachIndexed { idx, hadith ->
+            assertEquals(idx + 1, hadith.number)
+            assertTrue("Hadith ${hadith.number} text is blank", hadith.text.isNotBlank())
+            assertTrue("Hadith ${hadith.number} narrator is blank", hadith.narrator.isNotBlank())
+            assertTrue("Hadith ${hadith.number} source is blank", hadith.source.isNotBlank())
+            assertTrue("Hadith ${hadith.number} explanation is blank", hadith.explanation.isNotBlank())
+        }
+
+        val libraryCategory = com.example.data.LibraryData.categories.first { it.id == "prophetic_hadiths" }
+        assertEquals(50, libraryCategory.count)
+        assertEquals(50, libraryCategory.articles.size)
+    }
+
+    @Test
+    fun adhanManager_provides_muezzin_urls_and_applies_to_all_prayers() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertTrue(AdhanManager.MUADHIN_VOICES.size >= 5)
+        AdhanManager.MUADHIN_URLS.values.forEach { url ->
+            assertTrue("Adhan stream URL must use HTTPS: $url", url.startsWith("https://"))
+        }
+
+        AdhanManager.setMuadhinForAllPrayers(context, "مؤذن مكة")
+        assertEquals(5, AdhanManager.getPrayersUsingMuadhinCount(context, "مؤذن مكة"))
+        assertEquals("مؤذن مكة", AdhanManager.getMuadhinForPrayer(context, "Fajr"))
+        assertEquals("مؤذن مكة", AdhanManager.getMuadhinForPrayer(context, "Isha"))
+    }
+
+    @Test
+    fun networkUtils_detects_unknown_host_exception_chain() {
+        val root = java.net.UnknownHostException("Unable to resolve host: no network")
+        val wrapped = RuntimeException("ExoPlayerImplInternal: Playback error", root)
+        assertTrue(com.example.data.NetworkUtils.isNetworkOrHostError(wrapped))
+    }
 }

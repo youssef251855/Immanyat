@@ -34,6 +34,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.example.data.NetworkUtils
 import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.theme.*
@@ -159,32 +160,41 @@ fun VideosScreen(
         runningTime = "00:00"
         playerError = null
 
-        val player = ExoPlayer.Builder(context).build().apply {
-            val mediaItem = MediaItem.fromUri(activeVideo.videoUrl)
-            setMediaItem(mediaItem)
-            prepare()
-            volume = if (isMuted) 0f else 1f
-
-            addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(playing: Boolean) {
-                    isPlaying = playing
-                    if (playing) {
-                        playerError = null
-                    }
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    isPlaying = false
-                    playerError = "تعذر تحميل المقطع المرئي. تأكد من اتصالك بالإنترنت ثم حاول مجدداً."
-                }
-            })
-        }
-
-        exoPlayerInstance = player
-
-        onDispose {
-            player.release()
+        val isRemoteUrl = activeVideo.videoUrl.startsWith("http", ignoreCase = true)
+        if (isRemoteUrl && !NetworkUtils.isNetworkAvailable(context)) {
+            playerError = "لا يوجد اتصال بالإنترنت لتشغيل المقطع المرئي. فعّل الشبكة ثم اضغط إعادة المحاولة."
             exoPlayerInstance = null
+            onDispose {
+                exoPlayerInstance = null
+            }
+        } else {
+            val player = ExoPlayer.Builder(context).build().apply {
+                val mediaItem = MediaItem.fromUri(activeVideo.videoUrl)
+                setMediaItem(mediaItem)
+                prepare()
+                volume = if (isMuted) 0f else 1f
+
+                addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        isPlaying = playing
+                        if (playing) {
+                            playerError = null
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        isPlaying = false
+                        playerError = NetworkUtils.formatPlaybackErrorMessage(error, context)
+                    }
+                })
+            }
+
+            exoPlayerInstance = player
+
+            onDispose {
+                player.release()
+                exoPlayerInstance = null
+            }
         }
     }
 

@@ -2,6 +2,10 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models
 const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
 const MAX_AUDIO_BASE64_LENGTH = 8 * 1024 * 1024; // ~6 MB decoded audio limit
 const MIN_AUDIO_BASE64_LENGTH = 24000;
+const MAX_TEXT_LENGTH = 25000;
+const MAX_REQUEST_BYTES = 9 * 1024 * 1024;
+const UPSTREAM_TIMEOUT_MS = 25000;
+
 const ALLOWED_AUDIO_MIME_TYPES = new Set([
   "audio/mp4",
   "audio/m4a",
@@ -12,6 +16,22 @@ const ALLOWED_AUDIO_MIME_TYPES = new Set([
   "audio/webm",
   "audio/ogg"
 ]);
+
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    isTargetSurahRecitation: { type: "BOOLEAN" },
+    heardTranscript: { type: "STRING" },
+    score: { type: "NUMBER" },
+    status: { type: "STRING" },
+    mistakes: {
+      type: "ARRAY",
+      items: { type: "STRING" }
+    },
+    feedback: { type: "STRING" }
+  },
+  required: ["isTargetSurahRecitation", "heardTranscript", "score", "status", "mistakes", "feedback"]
+};
 
 function securityHeaders(origin, env, contentType = "application/json; charset=utf-8") {
   const allowedConfig = (env?.ALLOWED_ORIGINS || "*").trim();
@@ -25,9 +45,12 @@ function securityHeaders(origin, env, contentType = "application/json; charset=u
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-App-Token",
+    "Access-Control-Max-Age": "86400",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
+    "X-Robots-Tag": "noindex, nofollow",
     "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Cache-Control": "no-store, no-cache, must-revalidate, private"
   };
 }
@@ -64,14 +87,24 @@ function constantTimeEqual(a, b) {
 function isClientAuthorized(request, env) {
   const expectedToken = (env?.APP_CLIENT_TOKEN || "").trim();
   if (!expectedToken) {
-    // Public mode when APP_CLIENT_TOKEN secret is not set
     return true;
   }
   const provided = (request.headers.get("X-App-Token") || "").trim();
   return constantTimeEqual(provided, expectedToken);
 }
 
-async function readJsonBody(request, maxBytes = 9 * 1024 * 1024) {
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function readJsonBody(request, maxBytes = MAX_REQUEST_BYTES) {
+  const contentType = (request.headers.get("Content-Type") || "").toLowerCase();
+  if (contentType && !contentType.includes("application/json")) {
+    throw new HttpError(415, "نوع المحتوى غير مدعوم. يُرجى إرسال application/json.");
+  }
   const contentLength = Number(request.headers.get("Content-Length") || 0);
   if (contentLength > maxBytes) {
     throw new HttpError(413, "حجم الطلب يتجاوز الحد الأقصى المسموح به.");
@@ -87,14 +120,317 @@ async function readJsonBody(request, maxBytes = 9 * 1024 * 1024) {
   }
 }
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
+// =============================================================================
+// SMART ARABIC QURAN RECITATION NORMALIZER & VERIFIER
+// =============================================================================
+
+export function normalizeArabicQuranText(text) {
+  return String(text || "")
+    .replace(/\uFEFF/g, "")
+    // Strip Arabic diacritics, Quranic annotation marks, superscript alef, tatweel
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, "")
+    // Strip digits, ayah end signs, brackets, punctuation
+    .replace(/[0-9\u0660-\u0669\u06DD\uFD3E\uFD3F]/g, " ")
+    // Normalize Alef / Hamza / Ya / Ta Marbuta variants
+    .replace(/[\u0622\u0623\u0625\u0671]/g, "ا")
+    .replace(/\u0649/g, "ي")
+    .replace(/\u0629/g, "ه")
+    .replace(/\u0624/g, "و")
+    .replace(/\u0626/g, "ي")
+    // Remove anything outside Arabic letters and whitespace
+    .replace(/[^\u0621-\u064A\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-async function callGeminiWithFallback(env, contents, fetcher = fetch) {
+function looseOrthographicKey(word) {
+  // Helps match Uthmani vs standard spelling e.g. الرحمان/الرحمن, صلوة/صلاة
+  if (word.length <= 3) return word;
+  return word
+    .replace(/^ال/, "ال")
+    .replace(/([بتثجحخدذرزسشصضطظعغفقكلمنهوي])ا([بتثجحخدذرزسشصضطظعغفقكلمنهوي])$/g, "$1$2");
+}
+
+function tokensEqual(a, b) {
+  if (a === b) return true;
+  if (looseOrthographicKey(a) === looseOrthographicKey(b)) return true;
+  // Allow single-character tolerance on longer words (>=5 chars) for minor ASR transcription spelling differences
+  if (a.length >= 5 && b.length >= 5 && Math.abs(a.length - b.length) <= 1) {
+    let diffs = 0;
+    let i = 0;
+    let j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) {
+        i++;
+        j++;
+      } else {
+        diffs++;
+        if (diffs > 1) return false;
+        if (a.length > b.length) i++;
+        else if (b.length > a.length) j++;
+        else {
+          i++;
+          j++;
+        }
+      }
+    }
+    diffs += (a.length - i) + (b.length - j);
+    return diffs <= 1;
+  }
+  return false;
+}
+
+export function tokenizeArabicWords(text) {
+  const normalized = normalizeArabicQuranText(text);
+  if (!normalized) return [];
+  return normalized.split(" ").filter(Boolean);
+}
+
+function stripLeadingPrefixPhrase(tokens, phraseTokens) {
+  if (tokens.length < phraseTokens.length) return { tokens, stripped: false };
+  for (let i = 0; i < phraseTokens.length; i++) {
+    if (!tokensEqual(tokens[i], phraseTokens[i])) {
+      return { tokens, stripped: false };
+    }
+  }
+  return { tokens: tokens.slice(phraseTokens.length), stripped: true };
+}
+
+function lcsInWindow(userTokens, windowTokens) {
+  const n = userTokens.length;
+  const m = windowTokens.length;
+  if (n === 0 || m === 0) return { lcsCount: 0, matchedExpectedIndices: [], matchedUserIndices: [] };
+
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (tokensEqual(userTokens[i - 1], windowTokens[j - 1])) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = dp[i - 1][j] >= dp[i][j - 1] ? dp[i - 1][j] : dp[i][j - 1];
+      }
+    }
+  }
+
+  const matchedUserIndices = [];
+  const matchedExpectedIndices = [];
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    if (tokensEqual(userTokens[i - 1], windowTokens[j - 1])) {
+      matchedUserIndices.push(i - 1);
+      matchedExpectedIndices.push(j - 1);
+      i--;
+      j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  matchedUserIndices.reverse();
+  matchedExpectedIndices.reverse();
+
+  return {
+    lcsCount: dp[n][m],
+    matchedExpectedIndices,
+    matchedUserIndices
+  };
+}
+
+function findBestAnchorWindow(userTokens, expectedTokens) {
+  if (expectedTokens.length <= 180) {
+    return { start: 0, end: expectedTokens.length };
+  }
+
+  // Build bigram positions map for fast candidate localization in long Surahs (e.g. Al-Baqarah)
+  const wordPositions = new Map();
+  for (let j = 0; j < expectedTokens.length; j++) {
+    const key = looseOrthographicKey(expectedTokens[j]);
+    if (!wordPositions.has(key)) wordPositions.set(key, []);
+    wordPositions.get(key).push(j);
+  }
+
+  const anchorHits = [];
+  for (let i = 0; i < userTokens.length - 1; i++) {
+    const positions = wordPositions.get(looseOrthographicKey(userTokens[i])) || [];
+    for (const pos of positions) {
+      for (let gap = 1; gap <= 2; gap++) {
+        if (pos + gap < expectedTokens.length && tokensEqual(userTokens[i + 1], expectedTokens[pos + gap])) {
+          anchorHits.push(pos);
+          break;
+        }
+      }
+    }
+  }
+
+  if (anchorHits.length === 0) {
+    return { start: 0, end: Math.min(expectedTokens.length, 220) };
+  }
+
+  anchorHits.sort((a, b) => a - b);
+  const targetWindowLen = Math.max(80, Math.min(240, userTokens.length * 3));
+  let bestCount = 0;
+  let bestStart = anchorHits[0];
+  let right = 0;
+  for (let left = 0; left < anchorHits.length; left++) {
+    while (right < anchorHits.length && anchorHits[right] - anchorHits[left] <= targetWindowLen) {
+      right++;
+    }
+    const count = right - left;
+    if (count > bestCount) {
+      bestCount = count;
+      bestStart = anchorHits[left];
+    }
+  }
+
+  const start = Math.max(0, bestStart - 10);
+  const end = Math.min(expectedTokens.length, bestStart + targetWindowLen + 15);
+  return { start, end };
+}
+
+function roundToHalf(val) {
+  return Math.round(Math.max(0, Math.min(10, val)) * 2) / 2;
+}
+
+export function analyzeArabicRecitation(expectedText, candidateText, surahName = "") {
+  const expectedTokensRaw = tokenizeArabicWords(expectedText);
+  let userTokens = tokenizeArabicWords(candidateText);
+
+  const istiadha = ["اعوذ", "بالله", "من", "الشيطان", "الرجيم"];
+  const basmalah = ["بسم", "الله", "الرحمن", "الرحيم"];
+
+  const istiadhaStripped = stripLeadingPrefixPhrase(userTokens, istiadha);
+  userTokens = istiadhaStripped.tokens;
+
+  const isFatiha = normalizeArabicQuranText(surahName).includes("فاتحه");
+  let onlyBasmalah = false;
+  if (!isFatiha && expectedTokensRaw.length > 8) {
+    const basmalahCheck = stripLeadingPrefixPhrase(userTokens, basmalah);
+    if (basmalahCheck.stripped && basmalahCheck.tokens.length === 0) {
+      onlyBasmalah = true;
+    }
+  }
+
+  if (userTokens.length < 2) {
+    return {
+      expectedCount: expectedTokensRaw.length,
+      userCount: userTokens.length,
+      matchedCount: 0,
+      orderPrecision: 0,
+      bigramPrecision: 0,
+      windowRecall: 0,
+      surahCoverage: 0,
+      onlyBasmalahOrIstiadha: istiadhaStripped.stripped || onlyBasmalah,
+      isLikelyTargetSurah: false,
+      maxObjectiveScore: (istiadhaStripped.stripped || onlyBasmalah) ? 0.5 : 0.0,
+      missingWords: [],
+      extraWords: userTokens
+    };
+  }
+
+  if (onlyBasmalah) {
+    return {
+      expectedCount: expectedTokensRaw.length,
+      userCount: userTokens.length,
+      matchedCount: 0,
+      orderPrecision: 0,
+      bigramPrecision: 0,
+      windowRecall: 0,
+      surahCoverage: 0,
+      onlyBasmalahOrIstiadha: true,
+      isLikelyTargetSurah: false,
+      maxObjectiveScore: 0.5,
+      missingWords: expectedTokensRaw.slice(0, 6),
+      extraWords: []
+    };
+  }
+
+  const { start, end } = findBestAnchorWindow(userTokens, expectedTokensRaw);
+  const windowTokens = expectedTokensRaw.slice(start, end);
+
+  const { lcsCount, matchedExpectedIndices, matchedUserIndices } = lcsInWindow(userTokens, windowTokens);
+
+  // Measure contiguous bigrams across matched pairs
+  let bigramHits = 0;
+  for (let k = 0; k < matchedExpectedIndices.length - 1; k++) {
+    const expGap = matchedExpectedIndices[k + 1] - matchedExpectedIndices[k];
+    const usrGap = matchedUserIndices[k + 1] - matchedUserIndices[k];
+    if (expGap >= 1 && expGap <= 2 && usrGap >= 1 && usrGap <= 2) {
+      bigramHits++;
+    }
+  }
+
+  const orderPrecision = userTokens.length > 0 ? lcsCount / userTokens.length : 0;
+  const bigramPrecision = userTokens.length > 1 ? bigramHits / (userTokens.length - 1) : 0;
+
+  let spanRecall = 0;
+  let missingWords = [];
+  if (matchedExpectedIndices.length > 0) {
+    const firstExp = matchedExpectedIndices[0];
+    const lastExp = matchedExpectedIndices[matchedExpectedIndices.length - 1];
+    const spanLen = Math.max(1, lastExp - firstExp + 1);
+    spanRecall = lcsCount / spanLen;
+
+    const matchedSet = new Set(matchedExpectedIndices);
+    for (let idx = firstExp; idx <= lastExp && missingWords.length < 8; idx++) {
+      if (!matchedSet.has(idx)) {
+        missingWords.push(windowTokens[idx]);
+      }
+    }
+  }
+
+  const matchedUserSet = new Set(matchedUserIndices);
+  const extraWords = userTokens.filter((_, idx) => !matchedUserSet.has(idx)).slice(0, 8);
+  const surahCoverage = expectedTokensRaw.length > 0 ? lcsCount / expectedTokensRaw.length : 0;
+
+  // Determine if the user is actually reciting this Surah (rather than random talk or a different Surah)
+  let isLikelyTargetSurah = false;
+  if (userTokens.length <= 3) {
+    isLikelyTargetSurah = orderPrecision >= 0.66 && (bigramHits >= 1 || lcsCount === userTokens.length);
+  } else {
+    isLikelyTargetSurah = orderPrecision >= 0.42 && (bigramPrecision >= 0.18 || (lcsCount >= 4 && spanRecall >= 0.45));
+  }
+
+  let maxObjectiveScore = 0.0;
+  if (!isLikelyTargetSurah) {
+    maxObjectiveScore = (orderPrecision >= 0.25 && bigramHits >= 1) ? 1.5 : 0.0;
+  } else {
+    const segmentQuality = (0.50 * orderPrecision) + (0.30 * spanRecall) + (0.20 * bigramPrecision);
+    let scoreEstimate = segmentQuality * 10;
+
+    // For short/medium Surahs (<= 100 words), require reasonable coverage before awarding full marks
+    if (expectedTokensRaw.length <= 100 && surahCoverage < 0.78) {
+      const coverageFactor = Math.min(1, surahCoverage / 0.80);
+      scoreEstimate = Math.min(scoreEstimate, Math.max(2.0, scoreEstimate * (0.45 + 0.55 * coverageFactor)));
+    } else if (expectedTokensRaw.length > 100 && userTokens.length < 5) {
+      scoreEstimate = Math.min(scoreEstimate, 6.0);
+    }
+
+    maxObjectiveScore = roundToHalf(scoreEstimate);
+  }
+
+  return {
+    expectedCount: expectedTokensRaw.length,
+    userCount: userTokens.length,
+    matchedCount: lcsCount,
+    orderPrecision: Number(orderPrecision.toFixed(3)),
+    bigramPrecision: Number(bigramPrecision.toFixed(3)),
+    windowRecall: Number(spanRecall.toFixed(3)),
+    surahCoverage: Number(surahCoverage.toFixed(3)),
+    onlyBasmalahOrIstiadha: false,
+    isLikelyTargetSurah,
+    maxObjectiveScore,
+    missingWords,
+    extraWords
+  };
+}
+
+// =============================================================================
+// GEMINI CALLER WITH STRUCTURED JSON SCHEMA
+// =============================================================================
+
+async function callGeminiWithFallback(env, contents, fetcher = fetch, useSchema = true) {
   const apiKey = (env?.GEMINI_API_KEY || "").trim();
   if (!apiKey) {
     throw new HttpError(503, "خدمة الذكاء الاصطناعي غير مفعلة حالياً على الخادم (GEMINI_API_KEY غير مضاف في Cloudflare Secrets).");
@@ -105,12 +441,33 @@ async function callGeminiWithFallback(env, contents, fetcher = fetch) {
 
   for (const model of GEMINI_MODELS) {
     const endpoint = `${GEMINI_BASE_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const bodyPayload = {
+      contents,
+      generationConfig: useSchema
+        ? {
+            temperature: 0.0,
+            topP: 0.1,
+            responseMimeType: "application/json",
+            responseSchema: RESPONSE_SCHEMA
+          }
+        : {
+            temperature: 0.0,
+            topP: 0.1,
+            responseMimeType: "application/json"
+          }
+    };
+
     try {
-      const res = await fetcher(endpoint, {
+      const fetchOptions = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents })
-      });
+        body: JSON.stringify(bodyPayload)
+      };
+      if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+        fetchOptions.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+      }
+
+      const res = await fetcher(endpoint, fetchOptions);
       if (res.ok) {
         const json = await res.json();
         const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -120,10 +477,15 @@ async function callGeminiWithFallback(env, contents, fetcher = fetch) {
         lastErrorText = "Empty Gemini candidate response";
         continue;
       }
+
       lastStatus = res.status;
       lastErrorText = await res.text();
       if (res.status === 401 || res.status === 403) {
         throw new HttpError(502, "مفتاح الذكاء الاصطناعي على الخادم غير مخوّل حالياً.");
+      }
+      // If responseSchema caused a 400 on a fallback model, retry that model without schema
+      if (res.status === 400 && useSchema) {
+        return await callGeminiWithFallback(env, contents, fetcher, false);
       }
     } catch (err) {
       if (err instanceof HttpError) throw err;
@@ -131,7 +493,10 @@ async function callGeminiWithFallback(env, contents, fetcher = fetch) {
     }
   }
 
-  throw new HttpError(lastStatus >= 400 && lastStatus < 600 ? 502 : 502, `تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتاً (${lastErrorText.slice(0, 120)}).`);
+  throw new HttpError(
+    lastStatus >= 400 && lastStatus < 600 ? 502 : 502,
+    `تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتاً (${lastErrorText.slice(0, 120)}).`
+  );
 }
 
 function parseEvaluationJson(rawText) {
@@ -144,20 +509,100 @@ function parseEvaluationJson(rawText) {
 
   try {
     const parsed = JSON.parse(cleaned);
+    const isTargetSurahRecitation = parsed.isTargetSurahRecitation !== false;
+    const heardTranscript = typeof parsed.heardTranscript === "string" ? parsed.heardTranscript.trim() : "";
     const score = typeof parsed.score === "number" ? Math.min(10, Math.max(0, parsed.score)) : 0;
     const status = typeof parsed.status === "string" && parsed.status.trim() ? parsed.status.trim() : "نتيجة التقييم";
+    const mistakes = Array.isArray(parsed.mistakes)
+      ? parsed.mistakes.map((m) => String(m).trim()).filter(Boolean).slice(0, 12)
+      : [];
     const feedback = typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
-    return { score, status, feedback };
+    return { isTargetSurahRecitation, heardTranscript, score, status, mistakes, feedback };
   } catch {
     return {
+      isTargetSurahRecitation: false,
+      heardTranscript: "",
       score: 0.0,
       status: "تنبيه المعالجة ⚠️",
+      mistakes: [],
       feedback: cleaned || "تعذر تحليل مخرجات التقييم. يرجى إعادة المحاولة."
     };
   }
 }
 
+function buildMismatchResponse(surahName, analysis, heardTranscript = "") {
+  if (analysis.onlyBasmalahOrIstiadha) {
+    return {
+      score: 0.5,
+      status: "البسملة فقط دون آيات السورة ⚠️",
+      transcript: heardTranscript,
+      matchedRatio: analysis.orderPrecision,
+      mistakes: [],
+      feedback: `تم سماع الاستعاذة أو البسملة فقط دون البدء في آيات سورة ${surahName}. يُرجى تلاوة آيات السورة نفسها ليتم تقييم حفظك بدقة.`
+    };
+  }
 
+  const heardNote = heardTranscript
+    ? `\n• ما تم رصده فعلياً: "${heardTranscript.slice(0, 180)}"`
+    : "";
+
+  return {
+    score: 0.0,
+    status: "الكلام لا يطابق السورة ❌",
+    transcript: heardTranscript,
+    matchedRatio: analysis.orderPrecision,
+    mistakes: analysis.extraWords.slice(0, 5),
+    feedback: `الكلام المُرسل أو المسموع لا يطابق آيات سورة ${surahName} (نسبة التطابق ${(analysis.orderPrecision * 100).toFixed(0)}%).${heardNote}\n• يُرجى تلاوة أو كتابة آيات من سورة ${surahName} بوضوح للتقييم الصحيح.`
+  };
+}
+
+function finalizeVerifiedResult(aiEval, analysis, surahName, heardTranscript) {
+  if (!aiEval.isTargetSurahRecitation || !analysis.isLikelyTargetSurah) {
+    return buildMismatchResponse(surahName, analysis, heardTranscript);
+  }
+
+  // Strictly clamp AI score so it can NEVER over-score partial or mismatched recitations
+  const clampedScore = roundToHalf(Math.min(aiEval.score, analysis.maxObjectiveScore));
+
+  let status = aiEval.status;
+  if (clampedScore < 3.0) {
+    status = "يحتاج لمراجعة وتثبيت ⚠️";
+  } else if (clampedScore < 6.0 && !status.includes("جزئي")) {
+    status = analysis.surahCoverage < 0.7 && analysis.orderPrecision >= 0.75
+      ? "تسميع جزئي متقن ✨"
+      : "حفظ متوسط يحتاج مراجعة 📖";
+  }
+
+  let feedback = aiEval.feedback || "";
+  if (aiEval.score > analysis.maxObjectiveScore + 1.0) {
+    const details = [];
+    if (analysis.missingWords.length > 0) {
+      details.push(`كلمات ناقصة داخل المقطع: (${analysis.missingWords.slice(0, 6).join("، ")})`);
+    }
+    if (analysis.extraWords.length > 0) {
+      details.push(`كلمات غير مطابقة: (${analysis.extraWords.slice(0, 5).join("، ")})`);
+    }
+    if (analysis.expectedCount <= 100 && analysis.surahCoverage < 0.78) {
+      details.push(`تم تسميع ${analysis.matchedCount} كلمة من أصل ${analysis.expectedCount} كلمة في السورة.`);
+    }
+    if (details.length > 0) {
+      feedback = `${feedback}\n\n📌 ملاحظات التحقق الدقيق:\n• ${details.join("\n• ")}`.trim();
+    }
+  }
+
+  return {
+    score: clampedScore,
+    status,
+    transcript: heardTranscript,
+    matchedRatio: analysis.orderPrecision,
+    mistakes: aiEval.mistakes,
+    feedback: feedback || "تم تدقيق التلاوة بنجاح."
+  };
+}
+
+// =============================================================================
+// ROUTE HANDLERS
+// =============================================================================
 
 async function handleRecitationText(request, env, fetcher) {
   const body = await readJsonBody(request, 256 * 1024);
@@ -165,32 +610,41 @@ async function handleRecitationText(request, env, fetcher) {
   const correctText = String(body.correctText || "").trim().slice(0, 80000);
   const recitationText = String(body.recitationText || "").trim();
 
-  if (!surahName) {
-    throw new HttpError(400, "اسم السورة مطلوب.");
+  if (!surahName || !correctText) {
+    throw new HttpError(400, "اسم السورة والنص المرجعي مطلوبان.");
   }
   if (recitationText.length < 5) {
     return jsonResponse({
       score: 0.0,
       status: "تسميع قصير جداً ⚠️",
+      transcript: recitationText,
+      matchedRatio: 0,
+      mistakes: [],
       feedback: "أهلاً بك يا طيب، يبدو أن النص المكتوب قصير جداً أو فارغ. يرجى كتابة ما تيسر لك من السورة الكريمة بوضوح لتدقيق حفظك."
     }, 200, request, env);
   }
-  if (recitationText.length > 25000) {
+  if (recitationText.length > MAX_TEXT_LENGTH) {
     throw new HttpError(400, "النص المرسل أطول من الحد المسموح به في الطلب الواحد.");
   }
 
+  // Step 1: Deterministic pre-verification (prevents wasting AI quota & eliminates 9/10 on random chat!)
+  const preAnalysis = analyzeArabicRecitation(correctText, recitationText, surahName);
+  if (!preAnalysis.isLikelyTargetSurah) {
+    return jsonResponse(buildMismatchResponse(surahName, preAnalysis, recitationText), 200, request, env);
+  }
+
   const prompt = [
-    'أنت مدقق حفظ وتسميع القرآن الكريم ومعلم تجويد خبير ومحفز في تطبيق "إيمانيات".',
-    `السورة التي يحاول المستخدم تسميعها هي: سورة ${surahName}.`,
-    `النص الصحيح الكامل لهذه السورة من المصحف الشريف هو:\n${correctText}`,
+    'أنت مدقق حفظ قرآن كريم صارم وعادل في تطبيق "إيمانيات".',
+    `السورة المطلوبة هي: سورة ${surahName}.`,
+    `مقاييس المطابقة الآلية المبدئية: نسبة تطابق الكلمات المرتبة ${(preAnalysis.orderPrecision * 100).toFixed(0)}%، وتغطية السورة ${(preAnalysis.surahCoverage * 100).toFixed(0)}%.`,
+    `النص الصحيح الكامل لسورة ${surahName}:\n${correctText}`,
     "",
-    `نص التسميع الذي قدمه المستخدم:\n"${recitationText}"`,
+    `نص التسميع الذي كتبه المستخدم:\n"${recitationText}"`,
     "",
-    "الرجاء إجراء تدقيق تفصيلي للنص المقدم مقابل النص الصحيح للسورة:",
-    "1. حدد بدقة الكلمات أو الآيات المفقودة، المغلوطة، أو المستبدلة وصححها.",
-    "2. قيّم مستوى جودة وصحة الحفظ بوضع درجة من 10.",
-    "3. أذكر كلمات توجيهية لطيفة ودافئة.",
-    '4. أجب بتنسيق JSON فقط دون أي نص خارجه: {"score": 9.0, "status": "رائع وممتاز", "feedback": "..."}'
+    "قواعد صارمة لا تخالفها:",
+    "1. إذا كان النص كلاماً عادياً أو غير قرآني أو لا يطابق السورة المطلوبة: اجعل isTargetSurahRecitation = false و score = 0.0 فوراً.",
+    "2. لا تجامل بالدرجات أبداً. احسب الدرجة من 10 بدقة بناءً على الأخطاء والكلمات الناقصة والمستبدلة ومقدار التغطية.",
+    "3. ضع النص المُرسل في heardTranscript، واذكر الأخطاء المحددة في mistakes، واكتب توجيهاً واضحاً في feedback."
   ].join("\n");
 
   const raw = await callGeminiWithFallback(
@@ -198,19 +652,21 @@ async function handleRecitationText(request, env, fetcher) {
     [{ parts: [{ text: prompt }] }],
     fetcher
   );
-  return jsonResponse(parseEvaluationJson(raw), 200, request, env);
+  const aiEval = parseEvaluationJson(raw);
+  const finalResult = finalizeVerifiedResult(aiEval, preAnalysis, surahName, recitationText);
+  return jsonResponse(finalResult, 200, request, env);
 }
 
 async function handleRecitationAudio(request, env, fetcher) {
-  // Stateless audio evaluation: audio bytes live strictly in memory for the single request and are NEVER written or logged.
+  // Stateless audio evaluation: audio bytes live strictly in memory for this single request and are NEVER written or logged.
   const body = await readJsonBody(request, MAX_AUDIO_BASE64_LENGTH + 256 * 1024);
   const surahName = String(body.surahName || "").trim().slice(0, 80);
   const correctText = String(body.correctText || "").trim().slice(0, 80000);
   const mimeType = String(body.mimeType || "audio/mp4").trim().toLowerCase();
   const audioBase64 = typeof body.audioBase64 === "string" ? body.audioBase64.trim() : "";
 
-  if (!surahName) {
-    throw new HttpError(400, "اسم السورة مطلوب.");
+  if (!surahName || !correctText) {
+    throw new HttpError(400, "اسم السورة والنص المرجعي مطلوبان.");
   }
   if (!ALLOWED_AUDIO_MIME_TYPES.has(mimeType)) {
     throw new HttpError(400, "نوع الملف الصوتي غير مدعوم.");
@@ -219,6 +675,9 @@ async function handleRecitationAudio(request, env, fetcher) {
     return jsonResponse({
       score: 0.0,
       status: "تسجيل صامت أو قصير جداً ⚠️",
+      transcript: "",
+      matchedRatio: 0,
+      mistakes: [],
       feedback: "نعتذر يا طيب، يبدو أن التسجيل الصوتي صامت أو قصير جداً ولم يتضمن تلاوة واضحة. يُرجى التحدث بوضوح وقرب الميكروفون ثم إعادة المحاولة."
     }, 200, request, env);
   }
@@ -227,16 +686,15 @@ async function handleRecitationAudio(request, env, fetcher) {
   }
 
   const prompt = [
-    'أنت مدقق حفظ وتسميع القرآن الكريم العظيم ومعلم تجويد خبير رصين ومحفز في تطبيق "إيمانيات".',
-    `السورة التي يحاول المستخدم تسميعها تلاوة بالصوت هي: سورة ${surahName}.`,
-    `النص الصحيح المعتمد بالكامل لهذه السورة من المصحف الشريف هو:\n${correctText}`,
+    'أنت مدقق حفظ وتلاوة القرآن الكريم صارم ودقيق في تطبيق "إيمانيات".',
+    `السورة المفترضة للتسميع هي: سورة ${surahName}.`,
+    `النص المرجعي الكامل لسورة ${surahName} (للمقارنة فقط بعد التفريغ):\n${correctText}`,
     "",
-    "المطلوب منك بدقة بالغة:",
-    `1. استمع للملف الصوتي المرفق وقم بتفريغه ومقارنته بالآيات الصحيحة لسورة ${surahName}.`,
-    "2. قيّم جودة الحفظ وصحة التلاوة وأعطِ درجة من 10.",
-    '3. إذا كان التسجيل صمتاً أو ضوضاء دون كلام مسموع يرتل القرآن، فأعطِ score = 0.0 و status = "تسجيل غير مسموع ⚠️".',
-    "4. بيّن الأخطاء برفق وصحح الكلمات المفقودة أو المستبدلة.",
-    '5. أجب بتنسيق JSON فقط دون أي نص خارجه: {"score": 8.5, "status": "جيد جداً", "feedback": "..."}'
+    "تحذير حاسم لمنع الأخطاء:",
+    "1. استمع أولاً إلى الصوت وفرّغ الكلمات التي نطقها المتحدث حرفياً في حقل heardTranscript كما سمعتها بالضبط! يُمنع منعاً باتاً نسخ النص المرجعي إذا لم ينطق به المتحدث.",
+    "2. إذا سمعت كلاماً عادياً (مثل: ألو، السلام عليكم، تجربة، حديث يومي، ضحك، غناء، أو لغة غير عربية) أو ضوضاء أو صمتاً أو سورة قرآنية أخرى غير المطلوبة: اجعل isTargetSurahRecitation = false، واجعل score = 0.0، واكتب ما سمعته في heardTranscript.",
+    `3. فقط إذا تأكدت أن المتحدث يرتل فعلاً آيات من سورة ${surahName}: قيّم التلاوة بصدق وصرامة من 10 حسب الكلمات الصحيحة والمفقودة والمبدلة وأحكام النطق.`,
+    "4. لا تمنح درجات مرتفعة مجاملةً أبداً. اذكر الأخطاء المحددة في mistakes والتوجيه في feedback."
   ].join("\n");
 
   const raw = await callGeminiWithFallback(
@@ -244,10 +702,29 @@ async function handleRecitationAudio(request, env, fetcher) {
     [{ parts: [{ text: prompt }, { inlineData: { mimeType, data: audioBase64 } }] }],
     fetcher
   );
-  return jsonResponse(parseEvaluationJson(raw), 200, request, env);
+  const aiEval = parseEvaluationJson(raw);
+
+  // Step 2: Independent server-side verification against Gemini's verbatim heardTranscript
+  const transcriptForVerification = aiEval.heardTranscript || "";
+  if (!transcriptForVerification) {
+    return jsonResponse({
+      score: 0.0,
+      status: "لم يُرصد كلام مسموع ⚠️",
+      transcript: "",
+      matchedRatio: 0,
+      mistakes: [],
+      feedback: "لم يتمكن النظام من تمييز تلاوة قرآنية واضحة في التسجيل الصوتي. يُرجى الاقتراب من الميكروفون والتلاوة بصوت واضح بعيداً عن الضوضاء."
+    }, 200, request, env);
+  }
+
+  const audioTranscriptAnalysis = analyzeArabicRecitation(correctText, transcriptForVerification, surahName);
+  const finalResult = finalizeVerifiedResult(aiEval, audioTranscriptAnalysis, surahName, transcriptForVerification);
+  return jsonResponse(finalResult, 200, request, env);
 }
 
-
+// =============================================================================
+// GOOGLE PLAY COMPLIANCE STATIC PAGES
+// =============================================================================
 
 function renderPrivacyHtml(env) {
   const supportEmail = env?.SUPPORT_EMAIL || "support@immanyat.com";
@@ -292,7 +769,7 @@ function renderPrivacyHtml(env) {
 
   <div class="card en">
     <h2>English Summary (Google Play Policy)</h2>
-    <p>Imaniyat (<code>com.immanyat.com</code>) collects optional Google Sign-In profile data (name, email, UID) solely for cloud achievement sync via Firebase Firestore, optional device location for local prayer/Qibla calculation, and on-demand microphone audio only during Quran Tasmee' with explicit user consent. Audio clips are transmitted over HTTPS, processed statelessly, and deleted immediately without server retention. You may permanently delete your account and all cloud/local data inside the app or via <a href="/delete-account">/delete-account</a>.</p>
+    <p>Imaniyat (<code>com.immanyat.com</code>) collects optional Google Sign-In profile data (name, email, UID) solely for cloud achievement sync via Firebase Firestore, optional device location for local prayer/Qibla calculation, and on-demand microphone audio only during Quran Tasmee' with explicit user consent. Audio clips are transmitted over HTTPS, processed statelessly on Cloudflare Workers, and deleted immediately without server retention. You may permanently delete your account and all cloud/local data inside the app or via <a href="/delete-account">/delete-account</a>.</p>
   </div>
 </body>
 </html>`;
@@ -351,9 +828,25 @@ export async function handleRequest(request, env = {}, fetcher = fetch) {
     if (request.method === "GET" && (path === "/" || path === "/health")) {
       return jsonResponse({
         ok: true,
+        runtime: "cloudflare-workers",
         service: "emaniat-recitation-api",
         purpose: "quran-recitation-correction-only",
+        stateless: true,
         storagePolicy: "stateless-no-audio-retention",
+        smartVerification: [
+          "structured-json-schema",
+          "verbatim-audio-transcription",
+          "arabic-lcs-alignment",
+          "objective-score-clamping"
+        ],
+        limits: {
+          maxRequestBytes: MAX_REQUEST_BYTES,
+          maxAudioBase64Length: MAX_AUDIO_BASE64_LENGTH,
+          minAudioBase64Length: MIN_AUDIO_BASE64_LENGTH,
+          maxTextLength: MAX_TEXT_LENGTH,
+          upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
+          allowedAudioMimeTypes: Array.from(ALLOWED_AUDIO_MIME_TYPES)
+        },
         endpoints: [
           "/api/gemini/recitation-text",
           "/api/gemini/recitation-audio"
@@ -395,7 +888,7 @@ export async function handleRequest(request, env = {}, fetcher = fetch) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, _ctx) {
     return handleRequest(request, env, fetch);
   }
 };

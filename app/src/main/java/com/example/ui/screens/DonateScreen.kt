@@ -2,12 +2,7 @@ package com.example.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -25,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,17 +34,23 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.AdhanManager
+import com.example.data.CompassMath
+import com.example.data.CompassSensorStatus
+import com.example.data.HadithCollection
+import com.example.data.rememberCompassState
 import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.GlassCard
-import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.theme.*
+import com.example.ui.viewmodel.AppScreen
 import com.example.ui.viewmodel.EmaniatViewModel
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -314,77 +317,24 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
     var prayerStreak by remember { mutableStateOf(prefs.getInt("prayer_streak", 0)) }
 
     // Real device rotation sensor and calculated Qibla bearing for saved location
-    val qiblaBearing = remember { com.example.data.AdhanManager.calculateQiblaDirection(context).toFloat() }
-    var rawAzimuth by remember { mutableStateOf(0f) }
-    var isSensorAvailable by remember { mutableStateOf(false) }
+    val savedCoords = remember { AdhanManager.getSavedCoordinates(context) }
+    val qiblaBearing = remember { AdhanManager.calculateQiblaDirection(context).toFloat() }
+    val compassState = rememberCompassState(savedCoords.latitude, savedCoords.longitude)
 
     // Manual compass fallback when hardware sensor is unavailable
-    var manualOffset by remember { mutableStateOf(0f) }
+    var manualOffset by remember { mutableFloatStateOf(0f) }
+    val isManualMode = compassState.status == CompassSensorStatus.UNAVAILABLE
 
-    DisposableEffect(Unit) {
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        val rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        val accelSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
-        val magnetSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
-
-        val listener = object : SensorEventListener {
-            private val rotationMatrix = FloatArray(9)
-            private val orientationValues = FloatArray(3)
-            private val accelValues = FloatArray(3)
-            private val magnetValues = FloatArray(3)
-            private var hasAccel = false
-            private var hasMagnet = false
-
-            override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
-                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
-                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                    SensorManager.getOrientation(rotationMatrix, orientationValues)
-                    var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                    if (deg < 0f) deg += 360f
-                    rawAzimuth = deg
-                    isSensorAvailable = true
-                } else {
-                    if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                        System.arraycopy(event.values, 0, accelValues, 0, minOf(event.values.size, 3))
-                        hasAccel = true
-                    } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
-                        System.arraycopy(event.values, 0, magnetValues, 0, minOf(event.values.size, 3))
-                        hasMagnet = true
-                    }
-                    if (hasAccel && hasMagnet) {
-                        if (SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
-                            SensorManager.getOrientation(rotationMatrix, orientationValues)
-                            var deg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                            if (deg < 0f) deg += 360f
-                            rawAzimuth = deg
-                            isSensorAvailable = true
-                        }
-                    }
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-        }
-
-        if (sensorManager != null) {
-            if (rotationSensor != null) {
-                sensorManager.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
-            } else if (accelSensor != null && magnetSensor != null) {
-                sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_UI)
-                sensorManager.registerListener(listener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
-            }
-        }
-        onDispose {
-            sensorManager?.unregisterListener(listener)
-        }
-    }
-
-    val animatedRotation by animateFloatAsState(
-        targetValue = if (isSensorAvailable) -rawAzimuth else -manualOffset,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+    val targetContinuous = if (isManualMode) manualOffset else compassState.continuousAzimuth
+    val animatedContinuous by animateFloatAsState(
+        targetValue = targetContinuous,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
         label = "compassRotation"
     )
+    val displayAzimuth = CompassMath.normalizeAngle360(animatedContinuous)
+    val relativeQiblaAngle = CompassMath.normalizeAngle360(qiblaBearing - displayAzimuth)
+    val isAligned = (relativeQiblaAngle <= 4f || relativeQiblaAngle >= 356f) &&
+        (isManualMode || compassState.status != CompassSensorStatus.DETECTING)
 
     fun updateStreak() {
         // Simple streak logic: if all 5 prayers checked, streak increments
@@ -424,29 +374,35 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                 // The Compass Visual
                 Box(
                     modifier = Modifier
-                        .size(160.dp)
+                        .size(170.dp)
                         .clip(CircleShape)
                         .background(DarkBackground)
-                        .border(BorderStroke(2.dp, CardBorder), CircleShape)
+                        .border(
+                            BorderStroke(
+                                width = if (isAligned) 3.dp else 2.dp,
+                                color = if (isAligned) GoldAccent else CardBorder
+                            ),
+                            CircleShape
+                        )
                         .padding(8.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Outer compass rim
+                    // Outer compass rim rotating continuously relative to True North
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .rotate(animatedRotation),
+                            .rotate(-animatedContinuous),
                         contentAlignment = Alignment.Center
                     ) {
                         // Dial marks
                         Box(modifier = Modifier.fillMaxSize().padding(10.dp)) {
-                            Text("N", color = GoldAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter))
+                            Text("N", color = Color(0xFFE53935), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter))
                             Text("S", color = TextColorSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomCenter))
                             Text("E", color = TextColorSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterEnd))
                             Text("W", color = TextColorSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterStart))
                         }
 
-                        // Kaaba icon attached to calculated local Qibla bearing from North
+                        // Kaaba icon pinned at Qibla bearing on dial
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -457,10 +413,11 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                         }
                     }
 
-                    // Rotating indicator needle (emerald and steel pointer)
+                    // Active Kaaba Needle rotating directly toward Qibla relative to phone orientation
                     Column(
                         modifier = Modifier
-                            .fillMaxSize(0.8f),
+                            .fillMaxSize(0.76f)
+                            .rotate(qiblaBearing - animatedContinuous),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -469,7 +426,7 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                                 .width(6.dp)
                                 .weight(1f)
                                 .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                                .background(EmeraldPrimary)
+                                .background(if (isAligned) GoldAccent else EmeraldPrimary)
                         )
                         Box(
                             modifier = Modifier
@@ -490,13 +447,19 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
-                    text = if (isSensorAvailable) "تم ضبط البوصلة بمستشعرات الجهاز بدقة" else "الجهاز لا يحتوي على مستشعر بوصلة؛ استخدم المعايرة اليدوية:",
-                    color = TextColorSecondary,
+                    text = when {
+                        isAligned -> "✨ أنت الآن في اتجاه القبلة تماماً 🕋"
+                        isManualMode -> "الجهاز لا يحتوي على مستشعر بوصلة؛ استخدم المعايرة اليدوية:"
+                        compassState.status == CompassSensorStatus.DETECTING -> "جاري قراءة مستشعرات البوصلة..."
+                        else -> "تم ضبط البوصلة (${compassState.sensorSource}) — حرّك الهاتف على شكل 8 عند الحاجة"
+                    },
+                    color = if (isAligned) EmeraldSecondary else TextColorSecondary,
                     fontSize = 11.sp,
+                    fontWeight = if (isAligned) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center
                 )
 
-                if (!isSensorAvailable) {
+                if (isManualMode) {
                     Slider(
                         value = manualOffset,
                         onValueChange = { manualOffset = it },
@@ -510,11 +473,37 @@ fun QiblaAndPrayersTab(viewModel: EmaniatViewModel) {
                 }
 
                 Text(
-                    text = "اتجاه القبلة لموقعك: ${qiblaBearing.toInt()}° | الشمال الحالي: ${(if (isSensorAvailable) rawAzimuth else manualOffset).toInt()}°",
+                    text = "اتجاه القبلة لموقعك: ${qiblaBearing.toInt()}° | اتجاه الهاتف: ${displayAzimuth.toInt()}°",
                     color = GoldAccent,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedButton(
+                    onClick = {
+                        viewModel.triggerHaptic()
+                        viewModel.setScreen(AppScreen.QIBLA)
+                    },
+                    border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Explore,
+                        contentDescription = "فتح البوصلة الكاملة",
+                        tint = GoldAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "فتح البوصلة التفصيلية الكاملة",
+                        color = GoldAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -1110,45 +1099,21 @@ fun ZakatCalculatorTab(viewModel: EmaniatViewModel) {
 // ---------------------------------------------------------
 // FEATURE 5: DAILY HADITH SHARE & TEMPLATE MAKER
 // ---------------------------------------------------------
-data class DailyHadith(val text: String, val narrator: String, val source: String)
-
 @Composable
 fun HadithStudioTab(viewModel: EmaniatViewModel) {
     val context = LocalContext.current
+    var selectedTopic by remember { mutableStateOf("الكل") }
     var currentIndex by remember { mutableStateOf(0) }
+    var showExplanation by remember { mutableStateOf(false) }
     var posterBgColor by remember { mutableStateOf(EmeraldPrimary) }
 
-    val hadiths = remember {
-        listOf(
-            DailyHadith(
-                "«إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ، وَإِنَّمَا لِكُلِّ امْرِئٍ مَا نَوَى»",
-                "عمر بن الخطاب رضي الله عنه",
-                "صحيح البخاري ومسلم"
-            ),
-            DailyHadith(
-                "«مَنْ سَلَكَ طَرِيقًا يَلْتَمِسُ فِيهِ عِلْمًا سَهَّلَ اللَّهُ لَهُ بِهِ طَرِيقًا إِلَى الْجَنَّةِ»",
-                "أبو هريرة رضي الله عنه",
-                "صحيح مسلم"
-            ),
-            DailyHadith(
-                "«الدِّينُ النَّصِيحَةُ» قُلْنَا: لِمَنْ؟ قَالَ: «لِلَّهِ وَلِكِتَابِهِ وَلِرَسُولِهِ وَلأَئِمَّةِ الْمُسْلِمِينَ وَعَامَّتِهِمْ»",
-                "تميم الداري رضي الله عنه",
-                "صحيح مسلم"
-            ),
-            DailyHadith(
-                "«الْمُسْلِمُ مَنْ سَلَمَ الْمُسْلِمُونَ مِنْ لِسَانِهِ وَيَدِهِ»",
-                "عبد الله بن عمرو رضي الله عنهما",
-                "صحيح البخاري ومسلم"
-            ),
-            DailyHadith(
-                "«تَبَسُّمُكَ فِي وَجْهِ أَخِيكَ لَكَ صَدَقَةٌ»",
-                "أبو ذر الغفاري رضي الله عنه",
-                "سنن الترمذي"
-            )
-        )
+    val filteredHadiths = remember(selectedTopic) {
+        if (selectedTopic == "الكل") HadithCollection.ALL_50_HADITHS
+        else HadithCollection.ALL_50_HADITHS.filter { it.topic == selectedTopic }
     }
 
-    val currentHadith = hadiths[currentIndex]
+    val safeIndex = currentIndex.coerceIn(0, (filteredHadiths.size - 1).coerceAtLeast(0))
+    val currentHadith = filteredHadiths[safeIndex]
 
     Column(
         modifier = Modifier
@@ -1157,12 +1122,59 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "📜 أحاديث شريفة وبطاقات الحكمة الدعوية",
+            text = "📜 موسوعة ٥٠ حديثاً نبوياً صحيحاً بالمصادر",
             color = GoldAccent,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
+
+        // Topic Filter Chips
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            HadithCollection.TOPICS.forEach { topic ->
+                val isSelected = selectedTopic == topic
+                val topicCount = if (topic == "الكل") {
+                    HadithCollection.ALL_50_HADITHS.size
+                } else {
+                    HadithCollection.ALL_50_HADITHS.count { it.topic == topic }
+                }
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        viewModel.triggerHaptic()
+                        selectedTopic = topic
+                        currentIndex = 0
+                        showExplanation = false
+                    },
+                    label = {
+                        Text(
+                            text = "$topic ($topicCount)",
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = EmeraldPrimary,
+                        selectedLabelColor = GoldAccent,
+                        containerColor = SurfaceDarkGlass,
+                        labelColor = TextColorSecondary
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = isSelected,
+                        borderColor = CardBorder,
+                        selectedBorderColor = GoldAccent
+                    )
+                )
+            }
+        }
 
         // The Poster Board
         Card(
@@ -1176,45 +1188,66 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
+                    .padding(14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Background color chips to simulate canvas edit
+                // Header: Card Number + Color Palette
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val colors = listOf(EmeraldPrimary, EmeraldMuted, GoldAccent, Color(0xFF1E3A8A), Color(0xFF6B21A8))
-                    colors.forEach { col ->
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(col)
-                                .border(
-                                    BorderStroke(
-                                        2.dp,
-                                        if (posterBgColor == col) LightWhite else Color.Transparent
-                                    ),
-                                    CircleShape
-                                )
-                                .clickable {
-                                    viewModel.triggerHaptic()
-                                    posterBgColor = col
-                                }
+                    Surface(
+                        color = GoldAccent.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(0.5.dp, GoldAccent.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = "#${currentHadith.number} • ${currentHadith.title}",
+                            color = GoldAccent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val colors = listOf(EmeraldPrimary, EmeraldMuted, GoldAccent, Color(0xFF1E3A8A), Color(0xFF6B21A8))
+                        colors.forEach { col ->
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(col)
+                                    .border(
+                                        BorderStroke(
+                                            2.dp,
+                                            if (posterBgColor == col) LightWhite else Color.Transparent
+                                        ),
+                                        CircleShape
+                                    )
+                                    .clickable {
+                                        viewModel.triggerHaptic()
+                                        posterBgColor = col
+                                    }
+                            )
+                        }
                     }
                 }
 
-                // Styled Quote Canvas Box
+                // Styled Quote Canvas Box (Scrollable for longer authentic Hadiths)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(vertical = 16.dp)
+                        .padding(vertical = 10.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             Brush.verticalGradient(
@@ -1222,7 +1255,8 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
                             )
                         )
                         .border(BorderStroke(1.dp, GoldAccent.copy(alpha = 0.5f)), RoundedCornerShape(12.dp))
-                        .padding(20.dp),
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -1231,8 +1265,8 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
                     ) {
                         Text(
                             text = "🕌",
-                            fontSize = 24.sp,
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            fontSize = 22.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
                         )
 
                         Text(
@@ -1247,21 +1281,55 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Text(
-                            text = "راوي الحديث: ${currentHadith.narrator}",
+                            text = "الراوي: ${currentHadith.narrator}",
                             color = GoldAccent,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center
                         )
 
-                        Text(
-                            text = "المصدر: ${currentHadith.source}",
-                            color = TextColorSecondary,
-                            fontSize = 9.sp
-                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Surface(
+                            color = DarkBackground.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "المصدر: ${currentHadith.source}",
+                                color = LightWhite.copy(alpha = 0.9f),
+                                fontSize = 10.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        AnimatedVisibility(visible = showExplanation) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 10.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(DarkBackground.copy(alpha = 0.55f))
+                                    .padding(10.dp)
+                            ) {
+                                Text(
+                                    text = "الفائدة والشرح:",
+                                    color = GoldAccent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = currentHadith.explanation,
+                                    color = TextColorPrimary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 18.sp
+                                )
+                            }
+                        }
                     }
                 }
 
-                // Swiper Actions
+                // Swiper Actions + Explanation Toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1270,48 +1338,78 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
                     IconButton(
                         onClick = {
                             viewModel.triggerHaptic()
-                            currentIndex = if (currentIndex > 0) currentIndex - 1 else hadiths.size - 1
-                        }
+                            currentIndex = if (safeIndex > 0) safeIndex - 1 else filteredHadiths.size - 1
+                        },
+                        modifier = Modifier.testTag("hadith_prev_button")
                     ) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous", tint = GoldAccent)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "الحديث السابق",
+                            tint = GoldAccent
+                        )
                     }
 
-                    Text(
-                        text = "البطاقة ${currentIndex + 1} من ${hadiths.size}",
-                        color = TextColorPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "الحديث ${safeIndex + 1} من ${filteredHadiths.size}",
+                            color = TextColorPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        TextButton(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                showExplanation = !showExplanation
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (showExplanation) "إخفاء الشرح" else "الشرح والفائدة",
+                                color = EmeraldSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
 
                     IconButton(
                         onClick = {
                             viewModel.triggerHaptic()
-                            currentIndex = if (currentIndex < hadiths.size - 1) currentIndex + 1 else 0
-                        }
+                            currentIndex = if (safeIndex < filteredHadiths.size - 1) safeIndex + 1 else 0
+                        },
+                        modifier = Modifier.testTag("hadith_next_button")
                     ) {
-                        Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next", tint = GoldAccent)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "الحديث التالي",
+                            tint = GoldAccent
+                        )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Button(
             onClick = {
                 viewModel.triggerHaptic()
                 try {
-                    val shareText = "✨ حديث شريف ✨\n\n" +
+                    val shareText = "✨ حديث شريف (${currentHadith.title}) ✨\n\n" +
                             "${currentHadith.text}\n\n" +
-                            "راوي الحديث: ${currentHadith.narrator}\n" +
-                            "المصدر: ${currentHadith.source}\n\n" +
+                            "• الراوي: ${currentHadith.narrator}\n" +
+                            "• المصدر: ${currentHadith.source}\n\n" +
+                            "الفائدة: ${currentHadith.explanation}\n\n" +
                             "تمت المشاركة من تطبيق إيمانيات 🕌"
                     val intent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(Intent.EXTRA_TEXT, shareText)
                     }
                     context.startActivity(Intent.createChooser(intent, "نشر الحديث الشريف"))
-                    Toast.makeText(context, "تم توليد وتنسيق بطاقة الحكمة بنجاح! 🌟", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "تم تنسيق الحديث بالمصدر للمشاركة! 🌟", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -1321,13 +1419,14 @@ fun HadithStudioTab(viewModel: EmaniatViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
+                .testTag("hadith_share_button")
         ) {
-            Icon(imageVector = Icons.Default.Share, contentDescription = "Share", tint = LightWhite)
+            Icon(imageVector = Icons.Default.Share, contentDescription = "مشاركة الحديث", tint = LightWhite)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "مشاركة ونشر الحكمة بالزخرفة الإسلامية 🚀",
+                text = "مشاركة الحديث مع الراوي والمصدر 🚀",
                 color = LightWhite,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
         }

@@ -47,7 +47,9 @@ data class PlaybackState(
     val surahIndex: Int = 1,
     val reader: String = "الشيخ مشاري العفاسي",
     val progress: Float = 0f,
-    val isMuted: Boolean = false
+    val isMuted: Boolean = false,
+    val isBuffering: Boolean = false,
+    val errorMessage: String? = null
 )
 
 class EmaniatViewModel(application: Application) : AndroidViewModel(application) {
@@ -538,8 +540,68 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         startNewStream(surahName, surahIndex, readerLabel)
     }
 
+    fun clearPlaybackError() {
+        playbackState = playbackState.copy(errorMessage = null)
+    }
+
+    private fun getSurahRemoteUrls(reciter: String, fileName: String): List<String> {
+        return when (reciter) {
+            "afs" -> listOf(
+                "https://server8.mp3quran.net/afs/$fileName",
+                "https://download.quranicaudio.com/quran/mishaari_raashid_al_3afaasee/$fileName"
+            )
+            "basit" -> listOf(
+                "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName",
+                "https://server7.mp3quran.net/basit/$fileName"
+            )
+            "ghamdi" -> listOf(
+                "https://server11.mp3quran.net/s_gmd/$fileName",
+                "https://download.quranicaudio.com/quran/sa3d_al-ghaamidi/complete/$fileName"
+            )
+            "maher" -> listOf(
+                "https://server12.mp3quran.net/maher/$fileName",
+                "https://download.quranicaudio.com/quran/maher_256/$fileName"
+            )
+            "minsh" -> listOf(
+                "https://server10.mp3quran.net/minsh/$fileName",
+                "https://download.quranicaudio.com/quran/muhammad_siddeeq_al-minshaawee/$fileName"
+            )
+            else -> listOf("https://server8.mp3quran.net/afs/$fileName")
+        }
+    }
+
     private fun startNewStream(surahName: String, surahIndex: Int, reader: String) {
         stopRecitationOnly()
+
+        val fileName = String.format(java.util.Locale.US, "%03d.mp3", surahIndex)
+        val assetPath = "quran/$selectedReciter/$fileName"
+        val localFile = java.io.File(getApplication<Application>().filesDir, "quran/$selectedReciter/$fileName")
+        val assetExists = try {
+            getApplication<Application>().assets.open(assetPath).use { true }
+        } catch (_: Exception) {
+            false
+        }
+
+        val isLocalSource = (localFile.exists() && localFile.length() > 10 * 1024) || assetExists
+        if (!isLocalSource && !NetworkUtils.isNetworkAvailable(getApplication())) {
+            playbackState = PlaybackState(
+                isPlaying = false,
+                surahName = surahName,
+                surahIndex = surahIndex,
+                reader = reader,
+                progress = 0f,
+                isMuted = playbackState.isMuted,
+                isBuffering = false,
+                errorMessage = "لا يوجد اتصال بالإنترنت لتشغيل السورة أونلاين. يمكنك تحميل السورة للاستماع بدون نت."
+            )
+            return
+        }
+
+        val sources: List<String> = when {
+            localFile.exists() && localFile.length() > 10 * 1024 -> listOf(localFile.absolutePath)
+            assetExists -> listOf("asset:///$assetPath")
+            else -> getSurahRemoteUrls(selectedReciter, fileName)
+        }
 
         playbackState = PlaybackState(
             isPlaying = false,
@@ -547,71 +609,104 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             surahIndex = surahIndex,
             reader = reader,
             progress = 0.02f,
-            isMuted = playbackState.isMuted
+            isMuted = playbackState.isMuted,
+            isBuffering = !isLocalSource,
+            errorMessage = null
         )
 
-        // 1. Prepare file names
-        val fileName = String.format(java.util.Locale.US, "%03d.mp3", surahIndex)
-        val assetPath = "quran/$selectedReciter/$fileName"
-        
-        // 2. Check if file is downloaded in internal storage
-        val localFile = java.io.File(getApplication<Application>().filesDir, "quran/$selectedReciter/$fileName")
-        
-        // 3. Check if file exists in assets folder
-        val assetExists = try {
-            getApplication<Application>().assets.open(assetPath).use { true }
-        } catch (e: Exception) {
-            false
+        launchExoPlayerWithFallback(sources, sourceIndex = 0)
+    }
+
+    private fun launchExoPlayerWithFallback(sources: List<String>, sourceIndex: Int) {
+        if (sourceIndex >= sources.size) {
+            stopRecitationOnly()
+            playbackState = playbackState.copy(
+                isPlaying = false,
+                isBuffering = false,
+                errorMessage = "تعذر تشغيل السورة من خوادم الصوتيات. تحقق من الشبكة أو حمّل السورة محلياً."
+            )
+            return
         }
 
-        val url = if (localFile.exists()) {
-            localFile.absolutePath
-        } else if (assetExists) {
-            "asset:///$assetPath"
-        } else if (selectedReciter == "afs") {
-            "https://server8.mp3quran.net/afs/$fileName"
-        } else if (selectedReciter == "basit") {
-            "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
-        } else if (selectedReciter == "ghamdi") {
-            "https://server11.mp3quran.net/s_gmd/$fileName"
-        } else if (selectedReciter == "maher") {
-            "https://server12.mp3quran.net/maher/$fileName"
-        } else if (selectedReciter == "minsh") {
-            "https://server10.mp3quran.net/minsh/$fileName"
-        } else {
-            "https://server8.mp3quran.net/afs/$fileName"
+        val uriString = sources[sourceIndex]
+        val isRemote = uriString.startsWith("https://")
+        if (isRemote && !NetworkUtils.isNetworkAvailable(getApplication())) {
+            stopRecitationOnly()
+            playbackState = playbackState.copy(
+                isPlaying = false,
+                isBuffering = false,
+                errorMessage = "انقطع الاتصال بالإنترنت أثناء محاولة التشغيل. يرجى التحقق من الشبكة."
+            )
+            return
         }
 
         viewModelScope.launch {
             try {
                 val exo = ExoPlayer.Builder(getApplication()).build().apply {
-                    setMediaItem(MediaItem.fromUri(url))
+                    setMediaItem(MediaItem.fromUri(uriString))
                     prepare()
-                    
+
                     addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_READY && !isPlaying) {
-                                play()
-                                val vol = if (this@EmaniatViewModel.playbackState.isMuted) 0f else 1f
-                                volume = vol
-                                this@EmaniatViewModel.playbackState = this@EmaniatViewModel.playbackState.copy(isPlaying = true)
-                                startProgressUpdater()
-                            } else if (state == Player.STATE_ENDED) {
-                                this@EmaniatViewModel.playbackState = this@EmaniatViewModel.playbackState.copy(isPlaying = false, progress = 1.0f)
-                                stopRecitationOnly()
+                            when (state) {
+                                Player.STATE_BUFFERING -> {
+                                    this@EmaniatViewModel.playbackState =
+                                        this@EmaniatViewModel.playbackState.copy(isBuffering = true, errorMessage = null)
+                                }
+                                Player.STATE_READY -> {
+                                    if (!isPlaying) {
+                                        play()
+                                    }
+                                    val vol = if (this@EmaniatViewModel.playbackState.isMuted) 0f else 1f
+                                    volume = vol
+                                    this@EmaniatViewModel.playbackState =
+                                        this@EmaniatViewModel.playbackState.copy(
+                                            isPlaying = true,
+                                            isBuffering = false,
+                                            errorMessage = null
+                                        )
+                                    startProgressUpdater()
+                                }
+                                Player.STATE_ENDED -> {
+                                    this@EmaniatViewModel.playbackState =
+                                        this@EmaniatViewModel.playbackState.copy(
+                                            isPlaying = false,
+                                            isBuffering = false,
+                                            progress = 1.0f
+                                        )
+                                    stopRecitationOnly()
+                                }
                             }
                         }
-                        
+
                         override fun onPlayerError(error: PlaybackException) {
-                            Log.e("EmaniatViewModel", "ExoPlayer error", error)
-                            this@EmaniatViewModel.playbackState = this@EmaniatViewModel.playbackState.copy(isPlaying = false)
+                            Log.w("EmaniatViewModel", "ExoPlayer error on $uriString: ${error.errorCodeName}")
+                            stopRecitationOnly()
+
+                            val hasOnlineBackup = sourceIndex + 1 < sources.size &&
+                                NetworkUtils.isNetworkAvailable(getApplication())
+                            if (hasOnlineBackup) {
+                                launchExoPlayerWithFallback(sources, sourceIndex + 1)
+                            } else {
+                                this@EmaniatViewModel.playbackState =
+                                    this@EmaniatViewModel.playbackState.copy(
+                                        isPlaying = false,
+                                        isBuffering = false,
+                                        errorMessage = NetworkUtils.formatPlaybackErrorMessage(error, getApplication())
+                                    )
+                            }
                         }
                     })
                 }
                 quranExoPlayer = exo
             } catch (e: Exception) {
-                Log.e("EmaniatViewModel", "Error initiating Quran stream", e)
-                playbackState = playbackState.copy(isPlaying = false)
+                Log.w("EmaniatViewModel", "Error initiating Quran stream", e)
+                stopRecitationOnly()
+                playbackState = playbackState.copy(
+                    isPlaying = false,
+                    isBuffering = false,
+                    errorMessage = NetworkUtils.formatPlaybackErrorMessage(e, getApplication())
+                )
             }
         }
     }
@@ -777,19 +872,19 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
     fun downloadSurah(reciter: String, surahIndex: Int) {
         val key = "${reciter}_$surahIndex"
         if (downloadProgressMap.containsKey(key) && downloadProgressMap[key] != -1) {
-            // Already downloading
+            return
+        }
+
+        if (!NetworkUtils.isNetworkAvailable(getApplication())) {
+            downloadProgressMap = downloadProgressMap + (key to -1)
+            playbackState = playbackState.copy(
+                errorMessage = "لا يوجد اتصال بالإنترنت لتحميل السورة حالياً."
+            )
             return
         }
 
         val fileName = String.format(java.util.Locale.US, "%03d.mp3", surahIndex)
-        val urlString = when (reciter) {
-            "afs" -> "https://server8.mp3quran.net/afs/$fileName"
-            "basit" -> "https://download.quranicaudio.com/quran/abdul_basit_murattal/$fileName"
-            "ghamdi" -> "https://server11.mp3quran.net/s_gmd/$fileName"
-            "maher" -> "https://server12.mp3quran.net/maher/$fileName"
-            "minsh" -> "https://server10.mp3quran.net/minsh/$fileName"
-            else -> "https://server8.mp3quran.net/afs/$fileName"
-        }
+        val urlString = getSurahRemoteUrls(reciter, fileName).first()
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -798,10 +893,15 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 val url = java.net.URL(urlString)
-                val connection = url.openConnection() as java.net.HttpURLConnection
+                val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    setRequestProperty("User-Agent", "Imaniyat-Android/1.0")
+                }
                 connection.connect()
 
                 if (connection.responseCode != java.net.HttpURLConnection.HTTP_OK) {
+                    connection.disconnect()
                     throw Exception("Server returned HTTP ${connection.responseCode}")
                 }
 

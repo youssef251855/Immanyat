@@ -4,18 +4,19 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.data.AdhanManager
+import com.example.data.CompassMath
+import com.example.data.CompassSensorStatus
+import com.example.data.rememberCompassState
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -109,18 +111,26 @@ fun QiblaCompassScreen(
     var userLng by remember { mutableDoubleStateOf(savedCoords.longitude) }
     var locationName by remember { mutableStateOf(savedLocationName) }
 
-    // Compass Sensor Azimuth state (0 to 360)
-    var deviceAzimuth by remember { mutableFloatStateOf(0f) }
-    var hasCompassSensor by remember { mutableStateOf(true) }
+    // Unified lifecycle-aware Compass Sensor Engine with failover & declination
+    val compassState = rememberCompassState(userLat, userLng)
+    var manualAzimuth by remember { mutableFloatStateOf(0f) }
+    var forceManualMode by remember { mutableStateOf(false) }
 
-    // Smooth needle animation
-    val animatedAzimuth by animateFloatAsState(
-        targetValue = deviceAzimuth,
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
+    val isManualActive = forceManualMode || compassState.status == CompassSensorStatus.UNAVAILABLE
+    val targetContinuousAzimuth = if (isManualActive) manualAzimuth else compassState.continuousAzimuth
+
+    // Smooth continuous needle animation (no 359->1 wraparound spin)
+    val animatedContinuousAzimuth by animateFloatAsState(
+        targetValue = targetContinuousAzimuth,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "azimuthAnim"
     )
+    val displayAzimuth = CompassMath.normalizeAngle360(animatedContinuousAzimuth)
 
-    // Calculate Bearing to Kaaba (21.4225, 39.8262)
+    // Calculate Bearing to Kaaba (21.422487, 39.826206)
     val kaabaLat = 21.422487
     val kaabaLng = 39.826206
 
@@ -133,8 +143,40 @@ fun QiblaCompassScreen(
     }
 
     // Relative angle between device heading and Kaaba
-    val relativeAngle = (qiblaBearing - animatedAzimuth + 360f) % 360f
-    val isAligned = relativeAngle in 356.5f..360f || relativeAngle in 0f..3.5f
+    val relativeAngle = CompassMath.normalizeAngle360(qiblaBearing - displayAzimuth)
+    val isAligned = (relativeAngle <= 4f || relativeAngle >= 356f) &&
+        (isManualActive || compassState.status != CompassSensorStatus.DETECTING)
+
+    val applyLocationUpdate: (Location) -> Unit = { loc ->
+        userLat = loc.latitude
+        userLng = loc.longitude
+        locationName = "موقعي الحالي (GPS)"
+        AdhanManager.saveCoordinates(context, loc.latitude, loc.longitude, "موقعي الحالي (GPS)")
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val fine = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val coarse = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (fine || coarse) {
+            getLastKnownLocationSafely(context, fine)?.let(applyLocationUpdate)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            getLastKnownLocationSafely(context, fineGranted)?.let(applyLocationUpdate)
+        }
+    }
 
     // Haptic feedback upon perfect alignment
     val vibrator = remember { context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator }
@@ -149,93 +191,9 @@ fun QiblaCompassScreen(
                     @Suppress("DEPRECATION")
                     vibrator?.vibrate(50)
                 }
-            } catch (t: Throwable) {}
+            } catch (_: Throwable) {}
         }
         lastVibratedAligned = isAligned
-    }
-
-    // Register Sensor Listener
-    DisposableEffect(Unit) {
-        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        val rotationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        val accelSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
-        val magnetSensor = if (rotationSensor == null) sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) else null
-
-        if (rotationSensor == null && (accelSensor == null || magnetSensor == null)) {
-            hasCompassSensor = false
-        }
-
-        val listener = object : SensorEventListener {
-            private val rotationMatrix = FloatArray(9)
-            private val orientationValues = FloatArray(3)
-            private val accelValues = FloatArray(3)
-            private val magnetValues = FloatArray(3)
-            private var hasAccel = false
-            private var hasMagnet = false
-
-            override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
-                when (event.sensor.type) {
-                    Sensor.TYPE_ROTATION_VECTOR -> {
-                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                        SensorManager.getOrientation(rotationMatrix, orientationValues)
-                        var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                        if (azimuthDeg < 0) azimuthDeg += 360f
-                        deviceAzimuth = azimuthDeg
-                    }
-                    Sensor.TYPE_ACCELEROMETER -> {
-                        System.arraycopy(event.values, 0, accelValues, 0, 3)
-                        hasAccel = true
-                        if (hasMagnet && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
-                            SensorManager.getOrientation(rotationMatrix, orientationValues)
-                            var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                            if (azimuthDeg < 0) azimuthDeg += 360f
-                            deviceAzimuth = azimuthDeg
-                        }
-                    }
-                    Sensor.TYPE_MAGNETIC_FIELD -> {
-                        System.arraycopy(event.values, 0, magnetValues, 0, 3)
-                        hasMagnet = true
-                        if (hasAccel && SensorManager.getRotationMatrix(rotationMatrix, null, accelValues, magnetValues)) {
-                            SensorManager.getOrientation(rotationMatrix, orientationValues)
-                            var azimuthDeg = Math.toDegrees(orientationValues[0].toDouble()).toFloat()
-                            if (azimuthDeg < 0) azimuthDeg += 360f
-                            deviceAzimuth = azimuthDeg
-                        }
-                    }
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-        }
-
-        if (rotationSensor != null) {
-            sensorManager?.registerListener(listener, rotationSensor, SensorManager.SENSOR_DELAY_UI)
-        } else if (accelSensor != null && magnetSensor != null) {
-            sensorManager?.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_UI)
-            sensorManager?.registerListener(listener, magnetSensor, SensorManager.SENSOR_DELAY_UI)
-        }
-
-        // Try getting last known location only when runtime permission is granted
-        val fineGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        if (fineGranted || coarseGranted) {
-            getLastKnownLocationSafely(context, fineGranted)?.let { lastLoc ->
-                userLat = lastLoc.latitude
-                userLng = lastLoc.longitude
-                locationName = "موقعي الحالي (GPS)"
-            }
-        }
-
-        onDispose {
-            sensorManager?.unregisterListener(listener)
-        }
     }
 
     Box(
@@ -262,10 +220,11 @@ fun QiblaCompassScreen(
                     onClick = {
                         viewModel.setScreen(AppScreen.HOME)
                         viewModel.triggerHaptic()
-                    }
+                    },
+                    modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "الرجوع",
                         tint = GoldAccent
                     )
@@ -286,11 +245,36 @@ fun QiblaCompassScreen(
                 }
 
                 IconButton(
-                    onClick = { showCityPicker = true }
+                    onClick = {
+                        val fineGranted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val coarseGranted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (fineGranted || coarseGranted) {
+                            val loc = getLastKnownLocationSafely(context, fineGranted)
+                            if (loc != null) {
+                                applyLocationUpdate(loc)
+                            } else {
+                                showCityPicker = true
+                            }
+                        } else {
+                            locationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        }
+                    },
+                    modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.LocationOn,
-                        contentDescription = "تغيير المدينة",
+                        imageVector = Icons.Default.MyLocation,
+                        contentDescription = "تحديث الموقع بالـ GPS",
                         tint = GoldAccent
                     )
                 }
@@ -405,7 +389,7 @@ fun QiblaCompassScreen(
                             .padding(vertical = 10.dp, horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        val diff = ((qiblaBearing - animatedAzimuth + 360) % 360).toInt()
+                        val diff = CompassMath.normalizeAngle360(qiblaBearing - displayAzimuth).toInt()
                         val turnAdvice = if (diff > 180) "أدر الهاتف نحو اليسار بمقدار ${360 - diff}°" else "أدر الهاتف نحو اليمين بمقدار $diff°"
                         Text(
                             text = "🔄 $turnAdvice للوصول لاتجاه الكعبة",
@@ -417,7 +401,25 @@ fun QiblaCompassScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Live Sensor Health Pill
+            val (statusLabel, statusColor) = when {
+                isManualActive -> "وضع المعايرة اليدوية (لا توجد قراءة مغناطيسية من الجهاز)" to GoldAccent
+                compassState.status == CompassSensorStatus.DETECTING -> "جاري معايرة مستشعر البوصلة..." to TextColorSecondary
+                compassState.status == CompassSensorStatus.ACTIVE_HIGH -> "المستشعر نشط بدقة عالية (${compassState.sensorSource})" to EmeraldSecondary
+                compassState.status == CompassSensorStatus.ACTIVE_MEDIUM -> "دقة متوسطة — حرّك الهاتف بشكل (8) للمعايرة" to GoldAccent
+                else -> "دقة منخفضة — أبعد الهاتف عن المعادن وحرّكه بشكل (8)" to Color(0xFFFF8A8A)
+            }
+            Text(
+                text = statusLabel,
+                color = statusColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // BIG COMPASS ROSE & KAABA POINTER
             Box(
@@ -434,7 +436,7 @@ fun QiblaCompassScreen(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                // Dial Canvas rotating with device Azimuth
+                // Dial Canvas rotating continuously with device Azimuth
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
@@ -444,7 +446,7 @@ fun QiblaCompassScreen(
                     val center = Offset(size.width / 2f, size.height / 2f)
 
                     // Draw Dial relative to device heading
-                    rotate(degrees = -animatedAzimuth, pivot = center) {
+                    rotate(degrees = -animatedContinuousAzimuth, pivot = center) {
                         // Degree ticks
                         for (angle in 0 until 360 step 15) {
                             val isMajor = angle % 45 == 0
@@ -556,7 +558,7 @@ fun QiblaCompassScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${animatedAzimuth.toInt()}°",
+                        text = "${displayAzimuth.toInt()}°",
                         color = GoldAccent,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
@@ -565,7 +567,56 @@ fun QiblaCompassScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isManualActive) {
+                GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "التحكم اليدوي في اتجاه الشمال (${manualAzimuth.toInt()}°)",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Slider(
+                        value = manualAzimuth,
+                        onValueChange = { manualAzimuth = it },
+                        valueRange = 0f..360f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = GoldAccent,
+                            activeTrackColor = EmeraldPrimary
+                        ),
+                        modifier = Modifier.testTag("qibla_manual_slider")
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            } else {
+                TextButton(
+                    onClick = { forceManualMode = true },
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Text(
+                        text = "تبديل للمعايرة اليدوية إذا تعذّرت قراءة المستشعر",
+                        color = TextColorSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            if (forceManualMode && compassState.status != CompassSensorStatus.UNAVAILABLE) {
+                TextButton(
+                    onClick = { forceManualMode = false },
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Text(
+                        text = "العودة للقراءة التلقائية من مستشعرات الهاتف",
+                        color = EmeraldSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Calibration & Tips Card
             GlassCard(modifier = Modifier.fillMaxWidth()) {
@@ -658,6 +709,7 @@ fun QiblaCompassScreen(
                                         userLat = city.lat
                                         userLng = city.lng
                                         locationName = "${city.name} (${city.country})"
+                                        AdhanManager.saveCoordinates(context, city.lat, city.lng, city.name)
                                         showCityPicker = false
                                         viewModel.triggerHaptic()
                                     }

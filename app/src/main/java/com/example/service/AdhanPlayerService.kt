@@ -15,6 +15,7 @@ import com.example.AdhanAlarmActivity
 import com.example.R
 import com.example.MainActivity
 import com.example.data.AdhanManager
+import com.example.data.NetworkUtils
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
@@ -241,46 +242,99 @@ class AdhanPlayerService : Service() {
         val muadhin = AdhanManager.getMuadhinForPrayer(this, prayerName)
         val file = AdhanManager.getLocalAthanFile(this, muadhin)
         val useLocal = AdhanManager.isAthanDownloaded(this, muadhin)
+        val streamUrl = AdhanManager.getMuadhinStreamUrl(muadhin)
 
         serviceScope.launch(Dispatchers.Main) {
             try {
                 mediaPlayer?.release()
                 mediaPlayer = null
 
-                val player = MediaPlayer()
                 val attrs = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
-                player.setAudioAttributes(attrs)
-                player.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
 
-                var loadedFromLocal = false
+                var activePlayer: MediaPlayer? = null
+
+                // Tier 1: Downloaded offline MP3 of chosen Muezzin
                 if (useLocal && file.exists() && file.length() > 50 * 1024) {
                     try {
-                        player.setDataSource(file.absolutePath)
-                        player.prepare()
-                        loadedFromLocal = true
-                        Log.d("AdhanPlayerService", "Successfully loaded local athan file: ${file.absolutePath}")
+                        val localPlayer = MediaPlayer().apply {
+                            setAudioAttributes(attrs)
+                            setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                            setDataSource(file.absolutePath)
+                            prepare()
+                        }
+                        activePlayer = localPlayer
+                        Log.d("AdhanPlayerService", "Loaded downloaded offline adhan: ${file.absolutePath}")
                     } catch (e: Exception) {
-                        Log.w("AdhanPlayerService", "Failed loading local athan file, falling back to bundled R.raw.adhan", e)
+                        Log.w("AdhanPlayerService", "Local adhan file failed, will try online/bundled", e)
                     }
                 }
 
-                if (!loadedFromLocal) {
-                    // Play high quality bundled raw adhan
-                    resources.openRawResourceFd(R.raw.adhan).use { afd ->
-                        player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                        player.prepare()
+                // Tier 2: Online streaming of chosen Muezzin (async off main thread with timeout)
+                if (activePlayer == null && !streamUrl.isNullOrBlank() && NetworkUtils.isNetworkAvailable(this@AdhanPlayerService)) {
+                    val preparedOnlinePlayer = withContext(Dispatchers.IO) {
+                        withTimeoutOrNull(7000L) {
+                            suspendCancellableCoroutine<MediaPlayer?> { cont ->
+                                val remotePlayer = MediaPlayer()
+                                var settled = false
+                                fun finish(result: MediaPlayer?) {
+                                    if (!settled) {
+                                        settled = true
+                                        if (cont.isActive) {
+                                            cont.resumeWith(Result.success(result))
+                                        } else {
+                                            try { remotePlayer.release() } catch (_: Throwable) {}
+                                        }
+                                    }
+                                }
+
+                                cont.invokeOnCancellation {
+                                    try { remotePlayer.release() } catch (_: Throwable) {}
+                                }
+
+                                try {
+                                    remotePlayer.setAudioAttributes(attrs)
+                                    remotePlayer.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                                    remotePlayer.setOnPreparedListener { mp -> finish(mp) }
+                                    remotePlayer.setOnErrorListener { mp, what, extra ->
+                                        Log.w("AdhanPlayerService", "Online adhan stream error what=$what extra=$extra")
+                                        try { mp.release() } catch (_: Throwable) {}
+                                        finish(null)
+                                        true
+                                    }
+                                    remotePlayer.setDataSource(streamUrl)
+                                    remotePlayer.prepareAsync()
+                                } catch (e: Exception) {
+                                    Log.w("AdhanPlayerService", "Failed initializing online adhan stream: $streamUrl", e)
+                                    try { remotePlayer.release() } catch (_: Throwable) {}
+                                    finish(null)
+                                }
+                            }
+                        }
                     }
-                    Log.d("AdhanPlayerService", "Successfully prepared bundled R.raw.adhan")
+                    if (preparedOnlinePlayer != null) {
+                        activePlayer = preparedOnlinePlayer
+                        Log.d("AdhanPlayerService", "Successfully prepared online adhan stream for $muadhin")
+                    }
+                }
+
+                // Tier 3: Bundled high-quality offline fallback R.raw.adhan
+                val player = activePlayer ?: MediaPlayer().apply {
+                    setAudioAttributes(attrs)
+                    setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                    resources.openRawResourceFd(R.raw.adhan).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        prepare()
+                    }
+                    Log.d("AdhanPlayerService", "Prepared bundled offline fallback R.raw.adhan")
                 }
 
                 val targetVolume = AdhanManager.getAthanVolume(this@AdhanPlayerService).coerceIn(0.35f, 1.0f)
                 if (!AdhanManager.isGradualVolume(this@AdhanPlayerService)) {
                     player.setVolume(targetVolume, targetVolume)
                 } else {
-                    // Start clearly audible at 0.5f and smoothly ramp up
                     val startVol = minOf(0.5f, targetVolume)
                     player.setVolume(startVol, startVol)
                     startProgressiveVolumeRise(targetVolume)
@@ -293,7 +347,6 @@ class AdhanPlayerService : Service() {
 
                 player.setOnErrorListener { _, what, extra ->
                     Log.e("AdhanPlayerService", "MediaPlayer error: what=$what, extra=$extra")
-                    // If error occurs, fallback to bundled R.raw.adhan once
                     fallbackToBundledAdhan()
                     true
                 }

@@ -143,14 +143,68 @@ object AdhanManager {
         getPrefs(context).edit().putString("pray_muadhin_$prayerKey", muadhin).apply()
     }
 
-    // Muadhin play list and audio streaming URLs
-    val MUADHIN_URLS = mapOf(
-        "مشاري العفاسي" to "https://www.islamcan.com/audio/adhan/azan2.mp3",
-        "عبد الباسط" to "https://www.islamcan.com/audio/adhan/azan3.mp3",
-        "النقشبندي" to "https://www.islamcan.com/audio/adhan/azan15.mp3",
-        "مؤذن مكة" to "https://www.islamcan.com/audio/adhan/azan1.mp3",
-        "مؤذن المدينة" to "https://www.islamcan.com/audio/adhan/azan13.mp3"
+    fun setMuadhinForAllPrayers(context: Context, muadhin: String) {
+        val editor = getPrefs(context).edit()
+        listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha").forEach { key ->
+            editor.putString("pray_muadhin_$key", muadhin)
+        }
+        editor.apply()
+    }
+
+    fun getPrayersUsingMuadhinCount(context: Context, muadhin: String): Int {
+        return listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")
+            .count { getMuadhinForPrayer(context, it) == muadhin }
+    }
+
+    data class MuadhinVoice(
+        val name: String,
+        val subtitle: String,
+        val urls: List<String>
     )
+
+    val MUADHIN_VOICES = listOf(
+        MuadhinVoice(
+            name = "مشاري العفاسي",
+            subtitle = "الكويت • نبرة خاشعة صافية",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan2.mp3")
+        ),
+        MuadhinVoice(
+            name = "عبد الباسط",
+            subtitle = "مصر • أداء مجود عريق",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan3.mp3")
+        ),
+        MuadhinVoice(
+            name = "النقشبندي",
+            subtitle = "مصر • مقام روحاني مألوف",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan15.mp3")
+        ),
+        MuadhinVoice(
+            name = "مؤذن مكة",
+            subtitle = "الحرم المكي الشريف",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan1.mp3")
+        ),
+        MuadhinVoice(
+            name = "مؤذن المدينة",
+            subtitle = "المسجد النبوي المبارك",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan13.mp3")
+        ),
+        MuadhinVoice(
+            name = "أذان المسجد الأقصى",
+            subtitle = "القدس الشريف • نداء مبارك",
+            urls = listOf("https://www.islamcan.com/audio/adhan/azan12.mp3")
+        )
+    )
+
+    // Muadhin play list and audio streaming URLs
+    val MUADHIN_URLS = MUADHIN_VOICES.associate { it.name to it.urls.first() }
+
+    fun getMuadhinSubtitle(muadhinName: String): String {
+        return MUADHIN_VOICES.firstOrNull { it.name == muadhinName }?.subtitle ?: "أذان إسلامي مختار"
+    }
+
+    fun getMuadhinStreamUrl(muadhinName: String): String? {
+        return MUADHIN_URLS[muadhinName]
+    }
 
     // --- Offline audio downloading system ---
     fun getLocalAthanFile(context: Context, muadhinName: String): File {
@@ -164,47 +218,93 @@ object AdhanManager {
     }
 
     suspend fun downloadAthan(context: Context, muadhinName: String, onProgress: (Float) -> Unit): Boolean {
-        val urlString = MUADHIN_URLS[muadhinName] ?: return false
-        val file = getLocalAthanFile(context, muadhinName)
-        
+        val voiceUrls = MUADHIN_VOICES.firstOrNull { it.name == muadhinName }?.urls
+            ?: MUADHIN_URLS[muadhinName]?.let { listOf(it) }
+            ?: return false
+
+        if (!NetworkUtils.isNetworkAvailable(context)) {
+            return false
+        }
+
+        val targetFile = getLocalAthanFile(context, muadhinName)
+        val tempFile = File(context.filesDir, "${targetFile.name}.tmp")
+
         return withContext(Dispatchers.IO) {
-            try {
-                val url = URL(urlString)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                connection.connect()
-                
-                if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                    return@withContext false
-                }
-                
-                val fileLength = connection.contentLength
-                val inputStream = connection.inputStream
-                val outputStream = FileOutputStream(file)
-                
-                val data = ByteArray(4096)
-                var total: Long = 0
-                var count: Int
-                while (inputStream.read(data).also { count = it } != -1) {
-                    total += count
-                    if (fileLength > 0) {
-                        onProgress(total.toFloat() / fileLength)
+            for (urlString in voiceUrls) {
+                var connection: HttpURLConnection? = null
+                try {
+                    var currentUrl = URL(urlString)
+                    var redirects = 0
+                    while (redirects < 4) {
+                        val conn = currentUrl.openConnection() as HttpURLConnection
+                        conn.instanceFollowRedirects = false
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 20000
+                        conn.setRequestProperty("User-Agent", "Imaniyat-Android/1.0")
+                        conn.connect()
+
+                        val code = conn.responseCode
+                        if (code == HttpURLConnection.HTTP_MOVED_TEMP ||
+                            code == HttpURLConnection.HTTP_MOVED_PERM ||
+                            code == HttpURLConnection.HTTP_SEE_OTHER ||
+                            code == 307 || code == 308
+                        ) {
+                            val location = conn.getHeaderField("Location")
+                            conn.disconnect()
+                            if (location.isNullOrBlank()) break
+                            val nextUrl = URL(currentUrl, location)
+                            if (nextUrl.protocol != "https") break
+                            currentUrl = nextUrl
+                            redirects++
+                            continue
+                        }
+                        connection = conn
+                        break
                     }
-                    outputStream.write(data, 0, count)
+
+                    val activeConn = connection ?: continue
+                    if (activeConn.responseCode != HttpURLConnection.HTTP_OK) {
+                        activeConn.disconnect()
+                        continue
+                    }
+
+                    val fileLength = activeConn.contentLength
+                    activeConn.inputStream.use { input ->
+                        FileOutputStream(tempFile).use { output ->
+                            val data = ByteArray(8192)
+                            var total: Long = 0
+                            var count: Int
+                            while (input.read(data).also { count = it } != -1) {
+                                total += count
+                                if (fileLength > 0) {
+                                    onProgress((total.toFloat() / fileLength).coerceIn(0f, 1f))
+                                }
+                                output.write(data, 0, count)
+                            }
+                            output.flush()
+                        }
+                    }
+
+                    if (tempFile.exists() && tempFile.length() > 20 * 1024) {
+                        if (targetFile.exists()) targetFile.delete()
+                        if (tempFile.renameTo(targetFile)) {
+                            onProgress(1f)
+                            return@withContext true
+                        }
+                    }
+                    if (tempFile.exists()) tempFile.delete()
+                } catch (e: Exception) {
+                    Log.e("AdhanManager", "Download failed for $muadhinName from $urlString", e)
+                    if (tempFile.exists()) {
+                        tempFile.delete()
+                    }
+                } finally {
+                    try {
+                        connection?.disconnect()
+                    } catch (_: Throwable) {}
                 }
-                
-                outputStream.flush()
-                outputStream.close()
-                inputStream.close()
-                true
-            } catch (e: Exception) {
-                Log.e("AdhanManager", "Download failed for $muadhinName", e)
-                if (file.exists()) {
-                    file.delete()
-                }
-                false
             }
+            false
         }
     }
 
@@ -434,7 +534,7 @@ object AdhanManager {
         
         val dLon = meccaLonRad - lonRad
         
-        val y = Math.sin(dLon)
+        val y = Math.sin(dLon) * Math.cos(meccaLatRad)
         val x = Math.cos(latRad) * Math.sin(meccaLatRad) - Math.sin(latRad) * Math.cos(meccaLatRad) * Math.cos(dLon)
         
         var qiblaRad = Math.atan2(y, x)

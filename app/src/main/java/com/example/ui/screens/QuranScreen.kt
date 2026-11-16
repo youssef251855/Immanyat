@@ -129,6 +129,7 @@ fun QuranScreen(
     var evaluationResultScore by remember { mutableStateOf<Double?>(null) }
     var evaluationResultStatus by remember { mutableStateOf<String?>(null) }
     var evaluationResultFeedback by remember { mutableStateOf<String?>(null) }
+    var evaluationResultTranscript by remember { mutableStateOf<String?>(null) }
 
     // Voice Recitation (التسميع الصوتي) states
     var memorizationTab by remember { mutableStateOf(0) } // 0 = تسميع صوتي 🎙️, 1 = تسميع كتابي ✍️
@@ -1459,6 +1460,52 @@ fun QuranScreen(
                                             fontSize = 11.sp
                                         )
 
+                                        if (playbackState.isBuffering) {
+                                            Text(
+                                                text = "جاري تحضير البث الصوتي...",
+                                                color = EmeraldSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+
+                                        if (!playbackState.errorMessage.isNullOrBlank()) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Surface(
+                                                color = MutedRed.copy(alpha = 0.14f),
+                                                shape = RoundedCornerShape(10.dp),
+                                                border = BorderStroke(0.5.dp, MutedRed.copy(alpha = 0.5f)),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(10.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally
+                                                ) {
+                                                    Text(
+                                                        text = playbackState.errorMessage,
+                                                        color = LightWhite,
+                                                        fontSize = 11.sp,
+                                                        textAlign = TextAlign.Center
+                                                    )
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        TextButton(onClick = {
+                                                            viewModel.playRecitation(
+                                                                playbackState.surahName.ifEmpty { "الفاتحة" },
+                                                                playbackState.surahIndex
+                                                            )
+                                                        }) {
+                                                            Text("إعادة المحاولة", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                        TextButton(onClick = { viewModel.clearPlaybackError() }) {
+                                                            Text("إغلاق", color = TextColorSecondary, fontSize = 11.sp)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         Spacer(modifier = Modifier.height(8.dp))
 
                                         // Progress bar
@@ -1633,6 +1680,7 @@ fun QuranScreen(
                     evaluationResultScore = null
                     evaluationResultStatus = null
                     evaluationResultFeedback = null
+                    evaluationResultTranscript = null
                 },
                 containerColor = DarkBackground,
                 title = {
@@ -1924,9 +1972,11 @@ fun QuranScreen(
                         }
 
                         if (evaluationResultScore != null) {
+                            val isPassing = (evaluationResultScore ?: 0.0) >= 5.0
+                            val accentColor = if (isPassing) EmeraldSecondary else MutedRed
                             Card(
-                                colors = CardDefaults.cardColors(containerColor = EmeraldSecondary.copy(alpha = 0.08f)),
-                                border = BorderStroke(1.dp, EmeraldSecondary.copy(alpha = 0.3f)),
+                                colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.08f)),
+                                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                             ) {
                                 Column(modifier = Modifier.padding(14.dp)) {
@@ -1938,7 +1988,7 @@ fun QuranScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = "مستوى الحفظ: ${evaluationResultStatus ?: ""}",
-                                                color = EmeraldSecondary,
+                                                color = accentColor,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 14.sp
                                             )
@@ -1948,25 +1998,35 @@ fun QuranScreen(
                                                 fontSize = 10.sp
                                             )
                                         }
-                                        
+
                                         Box(
                                             modifier = Modifier
                                                 .size(54.dp)
                                                 .clip(CircleShape)
-                                                .background(EmeraldSecondary.copy(alpha = 0.15f)),
+                                                .background(accentColor.copy(alpha = 0.15f)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
                                                 text = "${evaluationResultScore!!}/10",
-                                                color = EmeraldSecondary,
+                                                color = accentColor,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp
                                             )
                                         }
                                     }
-                                    
+
+                                    if (!evaluationResultTranscript.isNullOrBlank() && memorizationTab == 0) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "ما سُمِع في التلاوة: «${evaluationResultTranscript}»",
+                                            color = GoldAccent,
+                                            fontSize = 11.sp,
+                                            lineHeight = 16.sp
+                                        )
+                                    }
+
                                     Spacer(modifier = Modifier.height(10.dp))
-                                    
+
                                     Text(
                                         text = evaluationResultFeedback ?: "",
                                         color = LightWhite,
@@ -1992,6 +2052,7 @@ fun QuranScreen(
                                 evaluationResultScore = null
                                 evaluationResultStatus = null
                                 evaluationResultFeedback = null
+                                evaluationResultTranscript = null
                             },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -2011,6 +2072,7 @@ fun QuranScreen(
                                     evaluationResultScore = null
                                     evaluationResultStatus = null
                                     evaluationResultFeedback = null
+                                    evaluationResultTranscript = null
 
                                     val correctText = getSurahFullText(surah.id, localQuranJson, fallbackVerses)
                                     val responseJson = if (memorizationTab == 0) {
@@ -2049,10 +2111,12 @@ fun QuranScreen(
                                         evaluationResultScore = jsonObject.optDouble("score", 0.0)
                                         evaluationResultStatus = jsonObject.optString("status", "غير معروف")
                                         evaluationResultFeedback = jsonObject.optString("feedback", "")
+                                        evaluationResultTranscript = jsonObject.optString("transcript", "").takeIf { it.isNotBlank() }
                                     } catch (e: Exception) {
                                         evaluationResultScore = 0.0
                                         evaluationResultStatus = "تنبيه الفحص ⚠️"
                                         evaluationResultFeedback = "نعتذر يا طيب، واجهتنا مشكلة في معالجة نتيجة التسميع الحالية. يرجى إعادة المحاولة والتأكد من الاتصال بالإنترنت."
+                                        evaluationResultTranscript = null
                                     } finally {
                                         isEvaluating = false
                                     }

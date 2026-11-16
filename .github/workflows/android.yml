@@ -167,7 +167,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Build & Sign Release APK
+      - name: Build & Sign Release AAB and APK (User Upload Key)
         id: release_build
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
@@ -177,87 +177,184 @@ jobs:
           ALIAS_INPUT: ${{ secrets.ALIAS || secrets.KEY_ALIAS }}
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
         run: |
-          USE_FALLBACK=false
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::المتغير SIGNING_KEY غير مضبوط في GitHub Secrets. تم إيقاف البناء لمنع استخدام مفتاح بديل."
+            exit 1
+          fi
+
+          # Decode Base64 keystore safely (supports raw base64, line breaks, quotes, or data-URI prefix)
+          CLEAN_B64=$(printf '%s' "$SIGNING_KEY" | sed -E 's|^data:[^;]+;base64,||; s|^["'\'']||; s|["'\'']$||' | tr -d '[:space:]')
+          if ! printf '%s' "$CLEAN_B64" | base64 --decode > "$KEYSTORE_PATH" 2>/dev/null || [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "::error::تعذر فك تشفير SIGNING_KEY بصيغة Base64. تأكد من نسخ ناتج base64 لملف المفتاح (.jks أو .keystore) بشكل صحيح."
+            exit 1
+          fi
+
           RESOLVED_STORE_PASS=""
           RESOLVED_KEY_PASS=""
-          RESOLVED_ALIAS="upload"
+          RESOLVED_ALIAS=""
+          KEYTOOL_LIST_OUT=""
 
-          if [ -n "$SIGNING_KEY" ] && printf '%s' "$SIGNING_KEY" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH" 2>/dev/null && [ -s "$KEYSTORE_PATH" ]; then
-            for CANDIDATE in "$PASS_A" "$PASS_B" "$PASS_C"; do
-              CANDIDATE_TRIMMED=$(printf '%s' "$CANDIDATE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              for P in "$CANDIDATE" "$CANDIDATE_TRIMMED"; do
-                if [ -n "$P" ]; then
-                  KEYTOOL_OUT=$(keytool -list -keystore "$KEYSTORE_PATH" -storepass "$P" 2>&1) && {
-                    RESOLVED_STORE_PASS="$P"
-                    break 2
-                  }
-                fi
-              done
-            done
-
-            if [ -n "$RESOLVED_STORE_PASS" ]; then
-              if [ -n "$ALIAS_INPUT" ]; then
-                RESOLVED_ALIAS=$(printf '%s' "$ALIAS_INPUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              else
-                DETECTED_ALIAS=$(printf '%s\n' "$KEYTOOL_OUT" | awk -F',' '/PrivateKeyEntry/{print $1; exit}' | xargs)
-                RESOLVED_ALIAS="${DETECTED_ALIAS:-upload}"
+          # 1) Validate keystore password (storepass)
+          for CANDIDATE in "$PASS_A" "$PASS_B" "$PASS_C"; do
+            [ -z "$CANDIDATE" ] && continue
+            CANDIDATE_TRIMMED=$(printf '%s' "$CANDIDATE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            for P in "$CANDIDATE" "$CANDIDATE_TRIMMED"; do
+              [ -z "$P" ] && continue
+              if OUT=$(LC_ALL=C keytool -list -keystore "$KEYSTORE_PATH" -storepass "$P" 2>&1); then
+                RESOLVED_STORE_PASS="$P"
+                KEYTOOL_LIST_OUT="$OUT"
+                break 2
               fi
-              RESOLVED_KEY_PASS="${PASS_C:-$RESOLVED_STORE_PASS}"
-              RESOLVED_KEY_PASS=$(printf '%s' "$RESOLVED_KEY_PASS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-              [ -z "$RESOLVED_KEY_PASS" ] && RESOLVED_KEY_PASS="$RESOLVED_STORE_PASS"
+            done
+          done
+
+          if [ -z "$RESOLVED_STORE_PASS" ]; then
+            echo "::error::فشل التحقق من كلمة مرور المخزن (KEYSTORE_PASSWORD / STORE_PASSWORD) أو ملف SIGNING_KEY غير صالح."
+            exit 1
+          fi
+
+          # 2) Resolve private key alias from keystore
+          AVAILABLE_ALIASES=$(printf '%s\n' "$KEYTOOL_LIST_OUT" | awk -F',' '/PrivateKeyEntry/{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
+          if [ -z "$AVAILABLE_ALIASES" ]; then
+            echo "::error::لم يتم العثور على مفتاح خاص (PrivateKeyEntry) داخل ملف SIGNING_KEY."
+            exit 1
+          fi
+
+          if [ -n "$ALIAS_INPUT" ]; then
+            ALIAS_TRIMMED=$(printf '%s' "$ALIAS_INPUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            EXACT_MATCH=$(printf '%s\n' "$AVAILABLE_ALIASES" | grep -Fx "$ALIAS_TRIMMED" | head -n 1 || true)
+            CASE_MATCH=$(printf '%s\n' "$AVAILABLE_ALIASES" | grep -Fix "$ALIAS_TRIMMED" | head -n 1 || true)
+            if [ -n "$EXACT_MATCH" ]; then
+              RESOLVED_ALIAS="$EXACT_MATCH"
+            elif [ -n "$CASE_MATCH" ]; then
+              RESOLVED_ALIAS="$CASE_MATCH"
             else
-              echo "::warning::SIGNING_KEY password did not match KEYSTORE_PASSWORD/STORE_PASSWORD/KEY_PASSWORD. Using CI fallback release keystore so Release APK still builds."
-              USE_FALLBACK=true
+              echo "::error::الاسم المستعار (Alias) '$ALIAS_TRIMMED' غير موجود في ملف التوقيع. الأسماء المتاحة: $(printf '%s' "$AVAILABLE_ALIASES" | tr '\n' ' ')"
+              exit 1
             fi
           else
-            echo "::warning::SIGNING_KEY not configured or invalid base64. Using CI fallback release keystore so Release APK still builds."
-            USE_FALLBACK=true
+            RESOLVED_ALIAS=$(printf '%s\n' "$AVAILABLE_ALIASES" | head -n 1)
           fi
 
-          if [ "$USE_FALLBACK" = "true" ]; then
-            rm -f "$KEYSTORE_PATH"
-            keytool -genkeypair -v -keystore "$KEYSTORE_PATH" \
-              -storepass android -keypass android -alias upload \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Emaniat,O=Emaniat,C=EG" >/dev/null 2>&1
-            RESOLVED_STORE_PASS="android"
-            RESOLVED_KEY_PASS="android"
-            RESOLVED_ALIAS="upload"
+          # 3) Validate private key password (keypass) before building
+          TMP_DIR=$(mktemp -d)
+          printf 'verify\n' > "$TMP_DIR/verify.txt"
+          jar cf "$TMP_DIR/test.jar" -C "$TMP_DIR" verify.txt
+
+          for CANDIDATE in "$PASS_C" "$RESOLVED_STORE_PASS" "$PASS_A" "$PASS_B"; do
+            [ -z "$CANDIDATE" ] && continue
+            CANDIDATE_TRIMMED=$(printf '%s' "$CANDIDATE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            for P in "$CANDIDATE" "$CANDIDATE_TRIMMED"; do
+              [ -z "$P" ] && continue
+              cp -f "$TMP_DIR/test.jar" "$TMP_DIR/sign_test.jar"
+              if LC_ALL=C jarsigner -keystore "$KEYSTORE_PATH" -storepass "$RESOLVED_STORE_PASS" -keypass "$P" "$TMP_DIR/sign_test.jar" "$RESOLVED_ALIAS" >/dev/null 2>&1; then
+                RESOLVED_KEY_PASS="$P"
+                break 2
+              fi
+            done
+          done
+          rm -rf "$TMP_DIR"
+
+          if [ -z "$RESOLVED_KEY_PASS" ]; then
+            echo "::error::كلمة مرور المفتاح الخاص (KEY_PASSWORD) غير صحيحة للاسم المستعار '$RESOLVED_ALIAS'."
+            exit 1
           fi
+
+          USER_SHA256=$(LC_ALL=C keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$RESOLVED_STORE_PASS" -alias "$RESOLVED_ALIAS" | awk '/SHA256:/{print $2; exit}')
+          echo "Verified user signing key -> Alias: $RESOLVED_ALIAS | SHA256: $USER_SHA256"
 
           export KEYSTORE_PATH
           export STORE_PASSWORD="$RESOLVED_STORE_PASS"
           export KEY_PASSWORD="$RESOLVED_KEY_PASS"
 
-          echo "Signing Release APK with alias: $RESOLVED_ALIAS (fallback=$USE_FALLBACK)"
-          if [ "$RESOLVED_ALIAS" = "upload" ]; then
-            ./gradlew assembleRelease --no-daemon
-            SIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
-            cp -f "$SIGNED_APK" app/build/outputs/apk/release/emaniat-release-signed.apk
+          # 4) Build Release AAB and Release APK signed with the user's exact upload key
+          ./gradlew bundleRelease assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$RESOLVED_STORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$RESOLVED_ALIAS" \
+            -Pandroid.injected.signing.key.password="$RESOLVED_KEY_PASS"
+
+          # 5) Verify Release AAB signature and confirm SHA-256 matches user's keystore
+          RAW_AAB=$(find app/build/outputs/bundle/release -maxdepth 1 -name "*.aab" ! -name "emaniat-release-signed.aab" | head -n 1)
+          if [ -z "$RAW_AAB" ] || [ ! -f "$RAW_AAB" ]; then
+            echo "::error::لم يتم العثور على ملف AAB الناتج في app/build/outputs/bundle/release."
+            exit 1
+          fi
+          FINAL_AAB="app/build/outputs/bundle/release/emaniat-release-signed.aab"
+          cp -f "$RAW_AAB" "$FINAL_AAB"
+
+          if ! LC_ALL=C jarsigner -verify "$FINAL_AAB" 2>/dev/null | grep -q "jar verified"; then
+            echo "Signing AAB with jarsigner using user alias '$RESOLVED_ALIAS'..."
+            jarsigner -verbose \
+              -keystore "$KEYSTORE_PATH" \
+              -storepass "$RESOLVED_STORE_PASS" \
+              -keypass "$RESOLVED_KEY_PASS" \
+              "$FINAL_AAB" "$RESOLVED_ALIAS"
+          fi
+          AAB_VERIFY_OUT=$(LC_ALL=C jarsigner -verify "$FINAL_AAB" 2>&1)
+          printf '%s\n' "$AAB_VERIFY_OUT"
+          if ! printf '%s\n' "$AAB_VERIFY_OUT" | grep -q "jar verified"; then
+            echo "::error::فشل التحقق من توقيع ملف AAB بواسطة jarsigner!"
+            exit 1
+          fi
+
+          USER_SHA256_CLEAN=$(printf '%s' "$USER_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          AAB_SHA256=$(LC_ALL=C keytool -printcert -jarfile "$FINAL_AAB" | awk '/SHA256:/{print $2; exit}')
+          AAB_SHA256_CLEAN=$(printf '%s' "$AAB_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          if [ -z "$AAB_SHA256_CLEAN" ] || [ "$AAB_SHA256_CLEAN" != "$USER_SHA256_CLEAN" ]; then
+            echo "::error::بصمة توقيع ملف AAB ($AAB_SHA256) لا تطابق بصمة مفتاحك ($USER_SHA256)!"
+            exit 1
+          fi
+
+          # 6) Verify Release APK signature and confirm SHA-256 matches user's keystore
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          RAW_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
+          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
+            echo "::error::لم يتم العثور على ملف APK الناتج في app/build/outputs/apk/release."
+            exit 1
+          fi
+          FINAL_APK="app/build/outputs/apk/release/emaniat-release-signed.apk"
+          if "$APKSIGNER" verify "$RAW_APK" >/dev/null 2>&1; then
+            cp -f "$RAW_APK" "$FINAL_APK"
           else
-            ./gradlew assembleRelease --no-daemon \
-              -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
-              -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
-              -Pandroid.injected.signing.key.alias="$RESOLVED_ALIAS" \
-              -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
-            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
-            UNSIGNED_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
             "$APKSIGNER" sign \
               --ks "$KEYSTORE_PATH" \
               --ks-key-alias "$RESOLVED_ALIAS" \
-              --ks-pass pass:"$STORE_PASSWORD" \
-              --key-pass pass:"$KEY_PASSWORD" \
-              --out app/build/outputs/apk/release/emaniat-release-signed.apk \
-              "$UNSIGNED_APK"
+              --ks-pass pass:"$RESOLVED_STORE_PASS" \
+              --key-pass pass:"$RESOLVED_KEY_PASS" \
+              --out "$FINAL_APK" \
+              "$RAW_APK"
           fi
 
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
-          echo "### Release APK Certificate (fallback=$USE_FALLBACK)" >> "$GITHUB_STEP_SUMMARY"
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/emaniat-release-signed.apk | tee -a "$GITHUB_STEP_SUMMARY" || true
+          APK_SHA256=$("$APKSIGNER" verify --print-certs "$FINAL_APK" | awk -F'digest: ' '/SHA-256 digest:/{print tolower($2); exit}')
+          if [ -z "$APK_SHA256" ] || [ "$APK_SHA256" != "$USER_SHA256_CLEAN" ]; then
+            echo "::error::بصمة توقيع ملف APK ($APK_SHA256) لا تطابق بصمة مفتاحك ($USER_SHA256_CLEAN)!"
+            exit 1
+          fi
+
+          {
+            echo "### Release AAB & APK (Signed with Your Upload Key)"
+            echo "- Alias: \`$RESOLVED_ALIAS\`"
+            echo "- SHA-256: \`$USER_SHA256\`"
+            echo "- AAB: \`$FINAL_AAB\`"
+            echo "- APK: \`$FINAL_APK\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### AAB Certificate" >> "$GITHUB_STEP_SUMMARY"
+          LC_ALL=C keytool -printcert -jarfile "$FINAL_AAB" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          echo "### APK Certificate" >> "$GITHUB_STEP_SUMMARY"
+          "$APKSIGNER" verify --print-certs "$FINAL_APK" | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Clean Up Release Keystore
         if: always()
         run: rm -f "${{ github.workspace }}/release.keystore"
+
+      - name: Upload Signed Release AAB Artifact (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: emaniat-release-signed-aab
+          path: app/build/outputs/bundle/release/emaniat-release-signed.aab
+          if-no-files-found: error
 
       - name: Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v4

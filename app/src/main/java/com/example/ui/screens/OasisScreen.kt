@@ -6,9 +6,12 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
+import com.example.data.AdhanManager
+import com.example.data.NetworkUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -1715,23 +1718,39 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
     val handlePlayDemo = { url: String ->
         viewModel.triggerHaptic()
         if (isTestingSound) {
-            mediaPlayerInstance?.let {
-                if (it.isPlaying) it.stop()
-                it.release()
-            }
+            try {
+                mediaPlayerInstance?.stop()
+            } catch (_: Throwable) {}
+            try {
+                mediaPlayerInstance?.release()
+            } catch (_: Throwable) {}
             mediaPlayerInstance = null
             isTestingSound = false
             Toast.makeText(context, "تم إيقاف تشغيل العينة الصوتية.", Toast.LENGTH_SHORT).show()
+        } else if (!NetworkUtils.isNetworkAvailable(context)) {
+            Toast.makeText(context, "يرجى الاتصال بالإنترنت للاستماع أو تحميل الصوت من إعدادات الأذان.", Toast.LENGTH_SHORT).show()
         } else {
             try {
                 isTestingSound = true
                 Toast.makeText(context, "جاري تحضير واستماع عينة الأذان... 🔊", Toast.LENGTH_SHORT).show()
-                val mp = MediaPlayer.create(context, Uri.parse(url))
-                mp.setOnPreparedListener {
-                    it.start()
-                }
-                mp.setOnCompletionListener {
-                    isTestingSound = false
+                val mp = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    setOnPreparedListener { it.start() }
+                    setOnCompletionListener { isTestingSound = false }
+                    setOnErrorListener { player, _, _ ->
+                        isTestingSound = false
+                        try { player.release() } catch (_: Throwable) {}
+                        mediaPlayerInstance = null
+                        Toast.makeText(context, "تعذر تشغيل العينة الصوتية حالياً.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    setDataSource(url)
+                    prepareAsync()
                 }
                 mediaPlayerInstance = mp
             } catch (e: Exception) {

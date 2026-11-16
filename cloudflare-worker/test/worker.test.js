@@ -1,15 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleRequest } from "../src/index.js";
+import { handleRequest, analyzeArabicRecitation } from "../src/index.js";
 
-test("GET /health returns recitation-only stateless policy status", async () => {
+test("GET /health returns Cloudflare Worker specs and recitation-only stateless status", async () => {
   const req = new Request("https://api.immanyat.example/health", { method: "GET" });
   const res = await handleRequest(req, {});
   assert.equal(res.status, 200);
   const json = await res.json();
   assert.equal(json.ok, true);
+  assert.equal(json.runtime, "cloudflare-workers");
+  assert.equal(json.stateless, true);
   assert.equal(json.purpose, "quran-recitation-correction-only");
   assert.equal(json.storagePolicy, "stateless-no-audio-retention");
+  assert.ok(Array.isArray(json.smartVerification));
+  assert.ok(json.limits.maxAudioBase64Length === 8 * 1024 * 1024);
 });
 
 test("GET /privacy and /delete-account serve Arabic & English HTML pages", async () => {
@@ -25,13 +29,65 @@ test("GET /privacy and /delete-account serve Arabic & English HTML pages", async
   assert.match(delHtml, /حذف الحساب والبيانات/);
 });
 
-test("POST /api/gemini/recitation-text evaluates written Quran memorization cleanly", async () => {
+test("POST /api/gemini/recitation-text rejects random non-Quranic speech with 0.0 instead of 9/10", async () => {
+  let geminiCalled = false;
+  const mockFetch = async () => {
+    geminiCalled = true;
+    return new Response("{}", { status: 200 });
+  };
+
+  const req = new Request("https://api.immanyat.example/api/gemini/recitation-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      surahName: "الفاتحة",
+      correctText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ",
+      recitationText: "ألو السلام عليكم كيف حالك اليوم هذا كلام عادي للتجربة"
+    })
+  });
+
+  const res = await handleRequest(req, { GEMINI_API_KEY: "test-key" }, mockFetch);
+  assert.equal(res.status, 200);
+  assert.equal(geminiCalled, false, "Should reject non-Quranic chatter locally before wasting Gemini call");
+  const json = await res.json();
+  assert.equal(json.score, 0);
+  assert.match(json.status, /لا يطابق/);
+});
+
+test("POST /api/gemini/recitation-text rejects wrong Surah (Al-Ikhlas recited while Al-Fatiha expected)", async () => {
+  const req = new Request("https://api.immanyat.example/api/gemini/recitation-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      surahName: "الفاتحة",
+      correctText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ",
+      recitationText: "قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد"
+    })
+  });
+
+  const res = await handleRequest(req, { GEMINI_API_KEY: "test-key" });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.score, 0);
+  assert.match(json.status, /لا يطابق/);
+});
+
+test("POST /api/gemini/recitation-text evaluates valid Surah recitation cleanly (handles leading Isti'adha)", async () => {
   const mockFetch = async () => {
     return new Response(JSON.stringify({
       candidates: [
         {
           content: {
-            parts: [{ text: '{"score": 10, "status": "حفظ متقن", "feedback": "أحسنت، التلاوة مطابقة تماماً."}' }]
+            parts: [{
+              text: JSON.stringify({
+                isTargetSurahRecitation: true,
+                heardTranscript: "أعوذ بالله من الشيطان الرجيم قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد",
+                score: 10,
+                status: "حفظ متقن",
+                mistakes: [],
+                feedback: "أحسنت، التلاوة مطابقة تماماً."
+              })
+            }]
           }
         }
       ]
@@ -43,8 +99,8 @@ test("POST /api/gemini/recitation-text evaluates written Quran memorization clea
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       surahName: "الإخلاص",
-      correctText: "قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد",
-      recitationText: "قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد"
+      correctText: "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ",
+      recitationText: "اعوذ بالله من الشيطان الرجيم قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد"
     })
   });
 
@@ -53,6 +109,47 @@ test("POST /api/gemini/recitation-text evaluates written Quran memorization clea
   const json = await res.json();
   assert.equal(json.score, 10);
   assert.equal(json.status, "حفظ متقن");
+});
+
+test("POST /api/gemini/recitation-audio clamps score to 0 if AI hallucinates 9/10 on non-Quranic transcript", async () => {
+  const mockFetch = async () => {
+    return new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                isTargetSurahRecitation: true, // even if model misclassifies
+                heardTranscript: "ألو تجربة واحد اثنين ثلاثة السلام عليكم",
+                score: 9.0, // inflated score that used to leak through!
+                status: "ممتاز",
+                mistakes: [],
+                feedback: "تلاوة جيدة"
+              })
+            }]
+          }
+        }
+      ]
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  const req = new Request("https://api.immanyat.example/api/gemini/recitation-audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      surahName: "الفاتحة",
+      correctText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ",
+      mimeType: "audio/mp4",
+      audioBase64: "A".repeat(25000)
+    })
+  });
+
+  const res = await handleRequest(req, { GEMINI_API_KEY: "test-key" }, mockFetch);
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.score, 0);
+  assert.match(json.status, /لا يطابق/);
+  assert.match(json.feedback, /ألو تجربة/);
 });
 
 test("POST /api/gemini/recitation-audio rejects unsupported mime type and silent short clip", async () => {
@@ -86,7 +183,7 @@ test("POST /api/gemini/recitation-audio rejects unsupported mime type and silent
   assert.match(shortJson.status, /صامت|قصير/);
 });
 
-test("POST /api/gemini/recitation-audio proxies statelessly without leaking API key", async () => {
+test("POST /api/gemini/recitation-audio proxies valid recitation statelessly without leaking API key", async () => {
   const secretKey = "SUPER_SECRET_KEY_NEVER_LEAK";
   let capturedUrl = "";
   const mockFetch = async (url) => {
@@ -95,7 +192,16 @@ test("POST /api/gemini/recitation-audio proxies statelessly without leaking API 
       candidates: [
         {
           content: {
-            parts: [{ text: '{"score": 9.5, "status": "ممتاز", "feedback": "تلاوة متقنة ومخارج سليمة."}' }]
+            parts: [{
+              text: JSON.stringify({
+                isTargetSurahRecitation: true,
+                heardTranscript: "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين",
+                score: 9.5,
+                status: "ممتاز",
+                mistakes: [],
+                feedback: "تلاوة متقنة ومخارج سليمة."
+              })
+            }]
           }
         }
       ]
@@ -107,7 +213,7 @@ test("POST /api/gemini/recitation-audio proxies statelessly without leaking API 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       surahName: "الفاتحة",
-      correctText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+      correctText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ",
       mimeType: "audio/mp4",
       audioBase64: "A".repeat(25000)
     })
@@ -121,6 +227,20 @@ test("POST /api/gemini/recitation-audio proxies statelessly without leaking API 
   const json = JSON.parse(bodyText);
   assert.equal(json.score, 9.5);
   assert.equal(json.status, "ممتاز");
+  assert.ok(json.matchedRatio >= 0.9);
+});
+
+test("analyzeArabicRecitation localizes segments accurately in long Surahs and detects Basmalah-only", () => {
+  const longSurah = Array.from({ length: 60 }, (_, i) => `آية رقم ${i}`).join(" ") +
+    " ذلك الكتاب لا ريب فيه هدى للمتقين الذين يؤمنون بالغيب ويقيمون الصلاة";
+  const segRes = analyzeArabicRecitation(longSurah, "ذلك الكتاب لا ريب فيه هدى للمتقين", "البقرة");
+  assert.equal(segRes.isLikelyTargetSurah, true);
+  assert.ok(segRes.maxObjectiveScore >= 8.0);
+
+  const basmalahOnly = analyzeArabicRecitation(longSurah, "بسم الله الرحمن الرحيم", "البقرة");
+  assert.equal(basmalahOnly.isLikelyTargetSurah, false);
+  assert.equal(basmalahOnly.onlyBasmalahOrIstiadha, true);
+  assert.equal(basmalahOnly.maxObjectiveScore, 0.5);
 });
 
 test("APP_CLIENT_TOKEN blocks unauthorized callers when configured", async () => {

@@ -9,6 +9,8 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Geocoder
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.os.Build
 import android.util.Log
 import android.content.Intent
@@ -48,9 +50,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.AdhanManager
+import com.example.data.CompassMath
+import com.example.data.NetworkUtils
 import com.example.data.PrayerTimeInfo
 import com.example.data.UpdateManager
 import com.example.data.UpdateInfo
+import com.example.data.rememberCompassState
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
@@ -359,6 +364,92 @@ fun TimesAndAudioTab(
     val scope = rememberCoroutineScope()
     var downloadProgressMap = remember { mutableStateMapOf<String, Float>() }
     var downloadJobMap = remember { mutableStateMapOf<String, Boolean>() }
+    var muadhinRefreshTick by remember { mutableStateOf(0) }
+    var previewingMuadhin by remember { mutableStateOf<String?>(null) }
+    var isPreviewPreparing by remember { mutableStateOf(false) }
+    var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    fun stopPreview() {
+        try {
+            previewPlayer?.stop()
+        } catch (_: Throwable) {}
+        try {
+            previewPlayer?.release()
+        } catch (_: Throwable) {}
+        previewPlayer = null
+        previewingMuadhin = null
+        isPreviewPreparing = false
+    }
+
+    fun togglePreviewMuadhin(muadhinName: String) {
+        viewModel.triggerHaptic()
+        if (previewingMuadhin == muadhinName) {
+            stopPreview()
+            return
+        }
+        stopPreview()
+
+        val localFile = AdhanManager.getLocalAthanFile(context, muadhinName)
+        val hasLocal = AdhanManager.isAthanDownloaded(context, muadhinName)
+        val streamUrl = AdhanManager.getMuadhinStreamUrl(muadhinName)
+
+        if (!hasLocal && !NetworkUtils.isNetworkAvailable(context)) {
+            Toast.makeText(
+                context,
+                "لا يوجد اتصال بالإنترنت لتشغيل الأذان أونلاين. يمكنك تحميله عند توفر الشبكة.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        if (!hasLocal && streamUrl.isNullOrBlank()) {
+            Toast.makeText(context, "رابط صوت المؤذن غير متاح.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+
+        previewingMuadhin = muadhinName
+        isPreviewPreparing = !hasLocal
+
+        try {
+            val mp = MediaPlayer().apply {
+                setAudioAttributes(attrs)
+                setOnPreparedListener { readyPlayer ->
+                    isPreviewPreparing = false
+                    readyPlayer.start()
+                }
+                setOnCompletionListener {
+                    stopPreview()
+                }
+                setOnErrorListener { _, _, _ ->
+                    stopPreview()
+                    Toast.makeText(context, "تعذر تشغيل صوت $muadhinName حالياً.", Toast.LENGTH_SHORT).show()
+                    true
+                }
+                if (hasLocal) {
+                    setDataSource(localFile.absolutePath)
+                } else {
+                    setDataSource(streamUrl!!)
+                }
+                prepareAsync()
+            }
+            previewPlayer = mp
+        } catch (e: Exception) {
+            Log.w("AdhanSettingsScreen", "Preview failed for $muadhinName", e)
+            stopPreview()
+            Toast.makeText(context, "تعذر تشغيل صوت $muadhinName.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            stopPreview()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -576,13 +667,267 @@ fun TimesAndAudioTab(
             }
         }
 
+        // Muezzin Voice Studio (Online Streaming + Offline Download)
+        item {
+            var showVoiceStudio by remember { mutableStateOf(true) }
+            val isOnline = NetworkUtils.isNetworkAvailable(context)
+
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, GoldAccent.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                viewModel.triggerHaptic()
+                                showVoiceStudio = !showVoiceStudio
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                imageVector = Icons.Default.RecordVoiceOver,
+                                contentDescription = "مكتبة المؤذنين",
+                                tint = GoldAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = "أصوات المؤذنين (أونلاين وتحميل أوفلاين) 🎙️",
+                                    color = LightWhite,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (isOnline) "البث المباشر متاح • يمكنك الاستماع أو التحميل لأي مؤذن"
+                                    else "وضع عدم الاتصال • الأصوات المحملة تعمل بدون إنترنت",
+                                    color = if (isOnline) EmeraldSecondary else GoldAccent,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (showVoiceStudio) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "توسيع مكتبة المؤذنين",
+                            tint = GoldAccent
+                        )
+                    }
+
+                    AnimatedVisibility(visible = showVoiceStudio) {
+                        Column(
+                            modifier = Modifier.padding(top = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AdhanManager.MUADHIN_VOICES.forEach { voice ->
+                                val isVoiceDownloaded = AdhanManager.isAthanDownloaded(context, voice.name)
+                                val isVoiceDownloading = downloadJobMap[voice.name] ?: false
+                                val voiceProgress = downloadProgressMap[voice.name] ?: 0f
+                                val isThisPreviewing = previewingMuadhin == voice.name
+                                val usedCount = remember(muadhinRefreshTick) {
+                                    AdhanManager.getPrayersUsingMuadhinCount(context, voice.name)
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (usedCount == 5) EmeraldMuted.copy(alpha = 0.25f)
+                                            else SurfaceDarkGlass.copy(alpha = 0.65f)
+                                        )
+                                        .border(
+                                            0.5.dp,
+                                            if (usedCount > 0) GoldAccent.copy(alpha = 0.45f) else CardBorder,
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    // Preview button (Play Online or Local)
+                                    IconButton(
+                                        onClick = { togglePreviewMuadhin(voice.name) },
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isThisPreviewing) MutedRed.copy(alpha = 0.2f)
+                                                else GoldAccent.copy(alpha = 0.15f)
+                                            )
+                                    ) {
+                                        if (isThisPreviewing && isPreviewPreparing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                color = GoldAccent,
+                                                strokeWidth = 2.dp
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = if (isThisPreviewing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                                contentDescription = "استماع لصوت ${voice.name}",
+                                                tint = if (isThisPreviewing) MutedRed else GoldAccent,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = voice.name,
+                                                color = LightWhite,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(
+                                                        if (isVoiceDownloaded) EmeraldSecondary.copy(alpha = 0.2f)
+                                                        else GoldAccent.copy(alpha = 0.12f)
+                                                    )
+                                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isVoiceDownloaded) "أوفلاين ✓" else "أونلاين 🌐",
+                                                    color = if (isVoiceDownloaded) EmeraldSecondary else GoldAccent,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = voice.subtitle,
+                                            color = TextColorSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                        if (usedCount > 0) {
+                                            Text(
+                                                text = if (usedCount == 5) "مُفعّل لجميع الصلوات" else "مُفعّل لـ $usedCount صلوات",
+                                                color = EmeraldSecondary,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        // Apply to all prayers
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.triggerHaptic()
+                                                AdhanManager.setMuadhinForAllPrayers(context, voice.name)
+                                                AdhanManager.scheduleNextAlarm(context)
+                                                muadhinRefreshTick++
+                                                onRefresh()
+                                                Toast.makeText(
+                                                    context,
+                                                    "تم تعيين صوت ${voice.name} لجميع الصلوات الخمس 🕌",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (usedCount == 5) "الافتراضي ✓" else "للجميع",
+                                                color = if (usedCount == 5) EmeraldSecondary else GoldAccent,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // Download or Delete MP3
+                                        if (isVoiceDownloading) {
+                                            CircularProgressIndicator(
+                                                progress = { voiceProgress },
+                                                modifier = Modifier.size(24.dp),
+                                                color = EmeraldSecondary,
+                                                strokeWidth = 2.dp
+                                            )
+                                        } else {
+                                            IconButton(
+                                                onClick = {
+                                                    viewModel.triggerHaptic()
+                                                    if (isVoiceDownloaded) {
+                                                        AdhanManager.deleteAthan(context, voice.name)
+                                                        muadhinRefreshTick++
+                                                        onRefresh()
+                                                        Toast.makeText(
+                                                            context,
+                                                            "تم حذف الملف المحلي لـ ${voice.name} (سيعمل أونلاين عند توفر الشبكة).",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    } else {
+                                                        if (!NetworkUtils.isNetworkAvailable(context)) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                "لا يوجد اتصال بالإنترنت لتحميل صوت المؤذن.",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                            return@IconButton
+                                                        }
+                                                        scope.launch {
+                                                            downloadJobMap[voice.name] = true
+                                                            downloadProgressMap[voice.name] = 0f
+                                                            val ok = AdhanManager.downloadAthan(context, voice.name) { prog ->
+                                                                downloadProgressMap[voice.name] = prog
+                                                            }
+                                                            downloadJobMap[voice.name] = false
+                                                            muadhinRefreshTick++
+                                                            onRefresh()
+                                                            if (ok) {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    "تم تحميل أذان ${voice.name} للعمل بدون إنترنت! 🎉",
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
+                                                            } else {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    "تعذر التحميل الآن. تأكد من الاتصال وحاول مجدداً.",
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.size(36.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (isVoiceDownloaded) Icons.Default.DeleteOutline else Icons.Outlined.CloudDownload,
+                                                    contentDescription = if (isVoiceDownloaded) "حذف التحميل" else "تحميل ${voice.name}",
+                                                    tint = if (isVoiceDownloaded) EmeraldSecondary else GoldAccent,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Beautiful List of 5 prayers (plus sunrise if displayed but sunrise is invalid for athan play)
         items(prayerTimesList) { prayer ->
             val prayerKey = prayer.name
             val arName = prayer.arabicName
-            var isEnabled by remember { mutableStateOf(prayer.isEnabled) }
-            var activeMuadhin by remember { mutableStateOf(AdhanManager.getMuadhinForPrayer(context, prayerKey)) }
-            var manualOffset by remember { mutableStateOf(AdhanManager.getManualOffset(context, prayerKey)) }
+            var isEnabled by remember(prayerKey, muadhinRefreshTick) { mutableStateOf(prayer.isEnabled) }
+            var activeMuadhin by remember(prayerKey, muadhinRefreshTick) { mutableStateOf(AdhanManager.getMuadhinForPrayer(context, prayerKey)) }
+            var manualOffset by remember(prayerKey, muadhinRefreshTick) { mutableStateOf(AdhanManager.getManualOffset(context, prayerKey)) }
             var isMenuExpanded by remember { mutableStateOf(false) }
 
             val isDownloaded = AdhanManager.isAthanDownloaded(context, activeMuadhin)
@@ -703,6 +1048,7 @@ fun TimesAndAudioTab(
                                                     activeMuadhin = muadhinName
                                                     AdhanManager.setMuadhinForPrayer(context, prayerKey, muadhinName)
                                                     AdhanManager.scheduleNextAlarm(context)
+                                                    muadhinRefreshTick++
                                                     isMenuExpanded = false
                                                 }
                                             )
@@ -726,6 +1072,7 @@ fun TimesAndAudioTab(
                                                 // delete to clear space
                                                 AdhanManager.deleteAthan(context, activeMuadhin)
                                                 Toast.makeText(context, "تم إزالة ملف صوت $activeMuadhin وتفعيل البث السحابي.", Toast.LENGTH_SHORT).show()
+                                                muadhinRefreshTick++
                                                 onRefresh()
                                             } else {
                                                 // download now
@@ -740,6 +1087,7 @@ fun TimesAndAudioTab(
                                                     } else {
                                                         Toast.makeText(context, "تحقق من اتصال الإنترنت وحاول مجددًا.", Toast.LENGTH_SHORT).show()
                                                     }
+                                                    muadhinRefreshTick++
                                                     onRefresh()
                                                 }
                                             }
@@ -833,96 +1181,19 @@ fun CompassAndMosquesTab(
     context: Context,
     viewModel: EmaniatViewModel
 ) {
-    var deviceAzimuth by remember { mutableStateOf(0f) }
-    val qiblaDegree = remember { AdhanManager.calculateQiblaDirection(context) }
     val savedCoords = remember { AdhanManager.getSavedCoordinates(context) }
     val savedCityName = remember { AdhanManager.getSavedLocationName(context) }
+    val compassState = rememberCompassState(savedCoords.latitude, savedCoords.longitude)
+    val deviceAzimuth = compassState.azimuthDegrees
+    val qiblaDegree = remember { AdhanManager.calculateQiblaDirection(context) }
 
-    // Compass Sensor listener
-    val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
-    val rotationSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) }
-    
-    // Fallback sensors if rotation vector is missing
-    val accelSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) }
-    val magnetSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) }
+    // Dynamic angles using continuous unwrapped rotation
+    val compassRotation = -compassState.continuousAzimuth
+    val qiblaRotationInDial = (qiblaDegree.toFloat() - compassState.continuousAzimuth)
 
-    DisposableEffect(Unit) {
-        val sensorEventListener = object : SensorEventListener {
-            private val rotationMatrix = FloatArray(9)
-            private val orientationValues = FloatArray(3)
-            
-            private var lastAccelerometer = FloatArray(3)
-            private var lastMagnetometer = FloatArray(3)
-            private var accelSet = false
-            private var magnetSet = false
-            private var lastAzimuth = 0f
-
-            override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null) return
-                try {
-                    if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
-                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                        SensorManager.getOrientation(rotationMatrix, orientationValues)
-                        var azimuthRad = orientationValues[0]
-                        var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
-                        azimuthDeg = (azimuthDeg + 360f) % 360f
-                        // Throttle state changes to prevent input dispatcher and main thread blockage
-                        if (Math.abs(azimuthDeg - lastAzimuth) > 2.0f) {
-                            lastAzimuth = azimuthDeg
-                            deviceAzimuth = azimuthDeg
-                        }
-                    } else {
-                        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                            val length = minOf(event.values.size, lastAccelerometer.size)
-                            System.arraycopy(event.values, 0, lastAccelerometer, 0, length)
-                            accelSet = true
-                        } else if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
-                            val length = minOf(event.values.size, lastMagnetometer.size)
-                            System.arraycopy(event.values, 0, lastMagnetometer, 0, length)
-                            magnetSet = true
-                        }
-                        if (accelSet && magnetSet) {
-                            SensorManager.getRotationMatrix(rotationMatrix, null, lastAccelerometer, lastMagnetometer)
-                            SensorManager.getOrientation(rotationMatrix, orientationValues)
-                            var azimuthRad = orientationValues[0]
-                            var azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
-                            azimuthDeg = (azimuthDeg + 360f) % 360f
-                            if (Math.abs(azimuthDeg - lastAzimuth) > 2.5f) {
-                                lastAzimuth = azimuthDeg
-                                deviceAzimuth = azimuthDeg
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("AdhanSettingsScreen", "Error calculation compass rotation", e)
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-        }
-
-        if (rotationSensor != null) {
-            sensorManager.registerListener(sensorEventListener, rotationSensor, SensorManager.SENSOR_DELAY_NORMAL)
-        } else {
-            if (accelSensor != null) {
-                sensorManager.registerListener(sensorEventListener, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
-            }
-            if (magnetSensor != null) {
-                sensorManager.registerListener(sensorEventListener, magnetSensor, SensorManager.SENSOR_DELAY_NORMAL)
-            }
-        }
-
-        onDispose {
-            sensorManager.unregisterListener(sensorEventListener)
-        }
-    }
-
-    // Dynamic angles
-    val compassRotation = -deviceAzimuth
-    val qiblaRotationInDial = (qiblaDegree - deviceAzimuth).toFloat()
-
-    // check lock-on tolerance
-    val isQiblaLocked = Math.abs(qiblaRotationInDial) < 3f || Math.abs(qiblaRotationInDial - 360f) < 3f
+    // check lock-on tolerance via shortest angular delta
+    val qiblaDelta = Math.abs(CompassMath.shortestAngleDelta(deviceAzimuth, qiblaDegree.toFloat()))
+    val isQiblaLocked = qiblaDelta <= 5f
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
