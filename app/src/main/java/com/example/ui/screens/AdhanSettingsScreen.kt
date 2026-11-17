@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.AdhanManager
 import com.example.data.CompassMath
-import com.example.data.NetworkUtils
 import com.example.data.PrayerTimeInfo
 import com.example.data.UpdateManager
 import com.example.data.UpdateInfo
@@ -362,11 +361,8 @@ fun TimesAndAudioTab(
     onRefresh: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var downloadProgressMap = remember { mutableStateMapOf<String, Float>() }
-    var downloadJobMap = remember { mutableStateMapOf<String, Boolean>() }
     var muadhinRefreshTick by remember { mutableStateOf(0) }
     var previewingMuadhin by remember { mutableStateOf<String?>(null) }
-    var isPreviewPreparing by remember { mutableStateOf(false) }
     var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
     fun stopPreview() {
@@ -378,71 +374,53 @@ fun TimesAndAudioTab(
         } catch (_: Throwable) {}
         previewPlayer = null
         previewingMuadhin = null
-        isPreviewPreparing = false
     }
 
-    fun togglePreviewMuadhin(muadhinName: String) {
+    fun togglePreviewAsset(previewKey: String, assetPath: String, displayLabel: String) {
         viewModel.triggerHaptic()
-        if (previewingMuadhin == muadhinName) {
+        if (previewingMuadhin == previewKey) {
             stopPreview()
             return
         }
         stopPreview()
-
-        val localFile = AdhanManager.getLocalAthanFile(context, muadhinName)
-        val hasLocal = AdhanManager.isAthanDownloaded(context, muadhinName)
-        val streamUrl = AdhanManager.getMuadhinStreamUrl(muadhinName)
-
-        if (!hasLocal && !NetworkUtils.isNetworkAvailable(context)) {
-            Toast.makeText(
-                context,
-                "لا يوجد اتصال بالإنترنت لتشغيل الأذان أونلاين. يمكنك تحميله عند توفر الشبكة.",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
-        if (!hasLocal && streamUrl.isNullOrBlank()) {
-            Toast.makeText(context, "رابط صوت المؤذن غير متاح.", Toast.LENGTH_SHORT).show()
-            return
-        }
 
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
-        previewingMuadhin = muadhinName
-        isPreviewPreparing = !hasLocal
-
         try {
             val mp = MediaPlayer().apply {
                 setAudioAttributes(attrs)
-                setOnPreparedListener { readyPlayer ->
-                    isPreviewPreparing = false
-                    readyPlayer.start()
-                }
                 setOnCompletionListener {
                     stopPreview()
                 }
                 setOnErrorListener { _, _, _ ->
                     stopPreview()
-                    Toast.makeText(context, "تعذر تشغيل صوت $muadhinName حالياً.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "تعذر تشغيل صوت $displayLabel حالياً.", Toast.LENGTH_SHORT).show()
                     true
                 }
-                if (hasLocal) {
-                    setDataSource(localFile.absolutePath)
-                } else {
-                    setDataSource(streamUrl!!)
+                context.assets.openFd(assetPath).use { afd ->
+                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    prepare()
                 }
-                prepareAsync()
+                start()
             }
+            previewingMuadhin = previewKey
             previewPlayer = mp
         } catch (e: Exception) {
-            Log.w("AdhanSettingsScreen", "Preview failed for $muadhinName", e)
+            Log.w("AdhanSettingsScreen", "Offline preview failed for $displayLabel ($assetPath)", e)
             stopPreview()
-            Toast.makeText(context, "تعذر تشغيل صوت $muadhinName.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "تعذر تشغيل صوت $displayLabel.", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    fun togglePreviewMuadhin(muadhinName: String) {
+        togglePreviewAsset(
+            previewKey = muadhinName,
+            assetPath = AdhanManager.getMuadhinAssetPath(muadhinName),
+            displayLabel = muadhinName
+        )
     }
 
     DisposableEffect(Unit) {
@@ -667,10 +645,9 @@ fun TimesAndAudioTab(
             }
         }
 
-        // Muezzin Voice Studio (Online Streaming + Offline Download)
+        // Muezzin Voice Studio (100% Bundled Offline)
         item {
             var showVoiceStudio by remember { mutableStateOf(true) }
-            val isOnline = NetworkUtils.isNetworkAvailable(context)
 
             GlassCard(
                 modifier = Modifier
@@ -698,15 +675,14 @@ fun TimesAndAudioTab(
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
                                 Text(
-                                    text = "أصوات المؤذنين (أونلاين وتحميل أوفلاين) 🎙️",
+                                    text = "أصوات المؤذنين (مدمجة أوفلاين بالكامل) 🎙️",
                                     color = LightWhite,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = if (isOnline) "البث المباشر متاح • يمكنك الاستماع أو التحميل لأي مؤذن"
-                                    else "وضع عدم الاتصال • الأصوات المحملة تعمل بدون إنترنت",
-                                    color = if (isOnline) EmeraldSecondary else GoldAccent,
+                                    text = "الأصوات الأربعة مدمجة داخل التطبيق وتعمل دائماً بدون إنترنت",
+                                    color = EmeraldSecondary,
                                     fontSize = 10.sp
                                 )
                             }
@@ -724,9 +700,6 @@ fun TimesAndAudioTab(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             AdhanManager.MUADHIN_VOICES.forEach { voice ->
-                                val isVoiceDownloaded = AdhanManager.isAthanDownloaded(context, voice.name)
-                                val isVoiceDownloading = downloadJobMap[voice.name] ?: false
-                                val voiceProgress = downloadProgressMap[voice.name] ?: 0f
                                 val isThisPreviewing = previewingMuadhin == voice.name
                                 val usedCount = remember(muadhinRefreshTick) {
                                     AdhanManager.getPrayersUsingMuadhinCount(context, voice.name)
@@ -749,31 +722,24 @@ fun TimesAndAudioTab(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    // Preview button (Play Online or Local)
+                                    // Offline Instant Preview Button
                                     IconButton(
                                         onClick = { togglePreviewMuadhin(voice.name) },
                                         modifier = Modifier
-                                            .size(40.dp)
+                                            .size(48.dp)
                                             .clip(CircleShape)
                                             .background(
                                                 if (isThisPreviewing) MutedRed.copy(alpha = 0.2f)
                                                 else GoldAccent.copy(alpha = 0.15f)
                                             )
+                                            .testTag("preview_muadhin_${voice.name}")
                                     ) {
-                                        if (isThisPreviewing && isPreviewPreparing) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(18.dp),
-                                                color = GoldAccent,
-                                                strokeWidth = 2.dp
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = if (isThisPreviewing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                                contentDescription = "استماع لصوت ${voice.name}",
-                                                tint = if (isThisPreviewing) MutedRed else GoldAccent,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = if (isThisPreviewing) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                            contentDescription = "استماع لصوت ${voice.name}",
+                                            tint = if (isThisPreviewing) MutedRed else GoldAccent,
+                                            modifier = Modifier.size(22.dp)
+                                        )
                                     }
 
                                     Spacer(modifier = Modifier.width(8.dp))
@@ -790,15 +756,12 @@ fun TimesAndAudioTab(
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
-                                                    .background(
-                                                        if (isVoiceDownloaded) EmeraldSecondary.copy(alpha = 0.2f)
-                                                        else GoldAccent.copy(alpha = 0.12f)
-                                                    )
+                                                    .background(EmeraldSecondary.copy(alpha = 0.2f))
                                                     .padding(horizontal = 5.dp, vertical = 1.dp)
                                             ) {
                                                 Text(
-                                                    text = if (isVoiceDownloaded) "أوفلاين ✓" else "أونلاين 🌐",
-                                                    color = if (isVoiceDownloaded) EmeraldSecondary else GoldAccent,
+                                                    text = "مدمج ✓",
+                                                    color = EmeraldSecondary,
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
@@ -819,101 +782,124 @@ fun TimesAndAudioTab(
                                         }
                                     }
 
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.triggerHaptic()
+                                            AdhanManager.setMuadhinForAllPrayers(context, voice.name)
+                                            AdhanManager.scheduleNextAlarm(context)
+                                            muadhinRefreshTick++
+                                            onRefresh()
+                                            Toast.makeText(
+                                                context,
+                                                "تم تعيين صوت ${voice.name} لجميع الصلوات الخمس 🕌",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("apply_muadhin_all_${voice.name}")
                                     ) {
-                                        // Apply to all prayers
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.triggerHaptic()
-                                                AdhanManager.setMuadhinForAllPrayers(context, voice.name)
-                                                AdhanManager.scheduleNextAlarm(context)
-                                                muadhinRefreshTick++
-                                                onRefresh()
-                                                Toast.makeText(
-                                                    context,
-                                                    "تم تعيين صوت ${voice.name} لجميع الصلوات الخمس 🕌",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = if (usedCount == 5) "الافتراضي ✓" else "للجميع",
-                                                color = if (usedCount == 5) EmeraldSecondary else GoldAccent,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        // Download or Delete MP3
-                                        if (isVoiceDownloading) {
-                                            CircularProgressIndicator(
-                                                progress = { voiceProgress },
-                                                modifier = Modifier.size(24.dp),
-                                                color = EmeraldSecondary,
-                                                strokeWidth = 2.dp
-                                            )
-                                        } else {
-                                            IconButton(
-                                                onClick = {
-                                                    viewModel.triggerHaptic()
-                                                    if (isVoiceDownloaded) {
-                                                        AdhanManager.deleteAthan(context, voice.name)
-                                                        muadhinRefreshTick++
-                                                        onRefresh()
-                                                        Toast.makeText(
-                                                            context,
-                                                            "تم حذف الملف المحلي لـ ${voice.name} (سيعمل أونلاين عند توفر الشبكة).",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
-                                                    } else {
-                                                        if (!NetworkUtils.isNetworkAvailable(context)) {
-                                                            Toast.makeText(
-                                                                context,
-                                                                "لا يوجد اتصال بالإنترنت لتحميل صوت المؤذن.",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                            return@IconButton
-                                                        }
-                                                        scope.launch {
-                                                            downloadJobMap[voice.name] = true
-                                                            downloadProgressMap[voice.name] = 0f
-                                                            val ok = AdhanManager.downloadAthan(context, voice.name) { prog ->
-                                                                downloadProgressMap[voice.name] = prog
-                                                            }
-                                                            downloadJobMap[voice.name] = false
-                                                            muadhinRefreshTick++
-                                                            onRefresh()
-                                                            if (ok) {
-                                                                Toast.makeText(
-                                                                    context,
-                                                                    "تم تحميل أذان ${voice.name} للعمل بدون إنترنت! 🎉",
-                                                                    Toast.LENGTH_SHORT
-                                                                ).show()
-                                                            } else {
-                                                                Toast.makeText(
-                                                                    context,
-                                                                    "تعذر التحميل الآن. تأكد من الاتصال وحاول مجدداً.",
-                                                                    Toast.LENGTH_SHORT
-                                                                ).show()
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                modifier = Modifier.size(36.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isVoiceDownloaded) Icons.Default.DeleteOutline else Icons.Outlined.CloudDownload,
-                                                    contentDescription = if (isVoiceDownloaded) "حذف التحميل" else "تحميل ${voice.name}",
-                                                    tint = if (isVoiceDownloaded) EmeraldSecondary else GoldAccent,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        }
+                                        Text(
+                                            text = if (usedCount == 5) "الافتراضي ✓" else "تعيين للجميع",
+                                            color = if (usedCount == 5) EmeraldSecondary else GoldAccent,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bundled Offline Iqamah, Post-Adhan Dua & Evening Azkar Showcase
+        item {
+            val maghribInfo = prayerTimesList.firstOrNull { it.name == "Maghrib" }
+            val eveningAzkarFormatted = remember(maghribInfo?.timeMillis) {
+                maghribInfo?.let {
+                    val fmt = java.text.SimpleDateFormat("hh:mm a", Locale.US)
+                    fmt.format(Date(it.timeMillis - AdhanManager.EVENING_AZKAR_BEFORE_MAGHRIB_MINUTES * 60_000L))
+                } ?: "--:--"
+            }
+
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, EmeraldSecondary.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "الإقامة ودعاء بعد الأذان وأذكار المساء (مدمجة أوفلاين) 📿",
+                        color = GoldAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    val specialAudios = listOf(
+                        Triple(
+                            "__iqamah__",
+                            AdhanManager.ASSET_IQAMAH_AUDIO,
+                            "صوت إقامة الصلاة" to "الفجر، الظهر، العصر، العشاء: بعد ١٥ د • المغرب: بعد ١٢ د"
+                        ),
+                        Triple(
+                            "__post_dua__",
+                            AdhanManager.ASSET_POST_ADHAN_DUA_AUDIO,
+                            "دعاء ما بعد الأذان" to "يعمل تلقائيًا فور انتهاء صوت الأذان"
+                        ),
+                        Triple(
+                            "__evening_azkar__",
+                            AdhanManager.ASSET_EVENING_AZKAR_AUDIO,
+                            "أذكار المساء الصوتية" to "يعمل قبل أذان المغرب بنصف ساعة (اليوم: $eveningAzkarFormatted)"
+                        )
+                    )
+
+                    specialAudios.forEach { (key, assetPath, textPair) ->
+                        val isPlayingThis = previewingMuadhin == key
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SurfaceDarkGlass.copy(alpha = 0.65f))
+                                .border(0.5.dp, CardBorder, RoundedCornerShape(12.dp))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            IconButton(
+                                onClick = { togglePreviewAsset(key, assetPath, textPair.first) },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isPlayingThis) MutedRed.copy(alpha = 0.2f)
+                                        else EmeraldSecondary.copy(alpha = 0.18f)
+                                    )
+                                    .testTag("preview_special_$key")
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    contentDescription = "استماع لـ ${textPair.first}",
+                                    tint = if (isPlayingThis) MutedRed else GoldAccent,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = textPair.first,
+                                    color = LightWhite,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = textPair.second,
+                                    color = TextColorSecondary,
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
                             }
                         }
                     }
@@ -929,10 +915,6 @@ fun TimesAndAudioTab(
             var activeMuadhin by remember(prayerKey, muadhinRefreshTick) { mutableStateOf(AdhanManager.getMuadhinForPrayer(context, prayerKey)) }
             var manualOffset by remember(prayerKey, muadhinRefreshTick) { mutableStateOf(AdhanManager.getManualOffset(context, prayerKey)) }
             var isMenuExpanded by remember { mutableStateOf(false) }
-
-            val isDownloaded = AdhanManager.isAthanDownloaded(context, activeMuadhin)
-            val isDownloading = downloadJobMap[activeMuadhin] ?: false
-            val progress = downloadProgressMap[activeMuadhin] ?: 0f
 
             // Check if this prayer is current or next highlights
             val isSunrise = prayerKey == "Sunrise"
@@ -997,23 +979,31 @@ fun TimesAndAudioTab(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                                if (!isSunrise) {
+                                    val iqamahMins = AdhanManager.getIqamahDelayMinutes(context, prayerKey)
+                                    Text(
+                                        text = "الإقامة بعد $iqamahMins دقيقة",
+                                        color = EmeraldSecondary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
 
-                        // Right side: Muadhin selector & Audio downloading
+                        // Right side: Muadhin selector & instant offline preview
                         if (!isSunrise && isEnabled) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // Muadhin text picker button
                                 Box {
                                     Button(
                                         onClick = { isMenuExpanded = true },
                                         colors = ButtonDefaults.buttonColors(containerColor = SurfaceDarkGlass),
                                         border = BorderStroke(0.5.dp, CardBorder),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                        modifier = Modifier.height(32.dp)
+                                        modifier = Modifier.height(36.dp)
                                     ) {
                                         Text(
                                             text = activeMuadhin,
@@ -1034,14 +1024,15 @@ fun TimesAndAudioTab(
                                         onDismissRequest = { isMenuExpanded = false },
                                         modifier = Modifier.background(SurfaceDarkGlass)
                                     ) {
-                                        AdhanManager.MUADHIN_URLS.keys.forEach { muadhinName ->
+                                        AdhanManager.MUADHIN_VOICES.forEach { voice ->
+                                            val muadhinName = voice.name
                                             DropdownMenuItem(
-                                                text = { 
+                                                text = {
                                                     Text(
-                                                        text = muadhinName, 
-                                                        color = LightWhite, 
+                                                        text = muadhinName,
+                                                        color = LightWhite,
                                                         fontWeight = if (activeMuadhin == muadhinName) FontWeight.Bold else FontWeight.Normal
-                                                    ) 
+                                                    )
                                                 },
                                                 onClick = {
                                                     viewModel.triggerHaptic()
@@ -1056,51 +1047,17 @@ fun TimesAndAudioTab(
                                     }
                                 }
 
-                                // Download status indicator / offline cacher trigger
-                                if (isDownloading) {
-                                    CircularProgressIndicator(
-                                        progress = { progress },
-                                        modifier = Modifier.size(24.dp),
-                                        color = EmeraldSecondary,
-                                        strokeWidth = 2.dp,
+                                IconButton(
+                                    onClick = { togglePreviewMuadhin(activeMuadhin) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    val isPlayingThis = previewingMuadhin == activeMuadhin
+                                    Icon(
+                                        imageVector = if (isPlayingThis) Icons.Default.StopCircle else Icons.Default.PlayCircle,
+                                        contentDescription = "تشغيل تجريبي لصوت $activeMuadhin",
+                                        tint = if (isPlayingThis) MutedRed else EmeraldSecondary,
+                                        modifier = Modifier.size(22.dp)
                                     )
-                                } else {
-                                    IconButton(
-                                        onClick = {
-                                            viewModel.triggerHaptic()
-                                            if (isDownloaded) {
-                                                // delete to clear space
-                                                AdhanManager.deleteAthan(context, activeMuadhin)
-                                                Toast.makeText(context, "تم إزالة ملف صوت $activeMuadhin وتفعيل البث السحابي.", Toast.LENGTH_SHORT).show()
-                                                muadhinRefreshTick++
-                                                onRefresh()
-                                            } else {
-                                                // download now
-                                                scope.launch {
-                                                    downloadJobMap[activeMuadhin] = true
-                                                    val success = AdhanManager.downloadAthan(context, activeMuadhin) { prog ->
-                                                        downloadProgressMap[activeMuadhin] = prog
-                                                    }
-                                                    downloadJobMap[activeMuadhin] = false
-                                                    if (success) {
-                                                        Toast.makeText(context, "تم تحميل أذان $activeMuadhin بالكامل للعمل دون إنترنت! 🎉", Toast.LENGTH_SHORT).show()
-                                                    } else {
-                                                        Toast.makeText(context, "تحقق من اتصال الإنترنت وحاول مجددًا.", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                    muadhinRefreshTick++
-                                                    onRefresh()
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isDownloaded) Icons.Default.OfflinePin else Icons.Outlined.CloudDownload,
-                                            contentDescription = "تثبيت الملف",
-                                            tint = if (isDownloaded) EmeraldSecondary else GoldAccent,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -1390,6 +1347,9 @@ fun SmartSettingsTab(
     var silentSleep by remember { mutableStateOf(AdhanManager.isSilentDuringSleep(context)) }
     var travelMode by remember { mutableStateOf(AdhanManager.isTravelMode(context)) }
     var daylightSaving by remember { mutableStateOf(AdhanManager.isDaylightSaving(context)) }
+    var iqamahAlarmEnabled by remember { mutableStateOf(AdhanManager.isIqamahAlarmEnabled(context)) }
+    var postAdhanDuaEnabled by remember { mutableStateOf(AdhanManager.isPostAdhanDuaEnabled(context)) }
+    var eveningAzkarAlarmEnabled by remember { mutableStateOf(AdhanManager.isEveningAzkarAlarmEnabled(context)) }
 
     var azkarRemind by remember { mutableStateOf(AdhanManager.isPostPrayerAzkarReminderEnabled(context)) }
     var qiyamRemind by remember { mutableStateOf(AdhanManager.isQiyamReminderEnabled(context)) }
@@ -1821,6 +1781,89 @@ fun SmartSettingsTab(
                             }
                         }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Iqamah automatic alarm switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Campaign, contentDescription = "الإقامة", tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text("منبه الإقامة التلقائي", color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("بعد الفجر والظهر والعصر والعشاء بـ ١٥د والمغرب بـ ١٢د.", color = TextColorSecondary, fontSize = 9.sp)
+                        }
+                    }
+                    Switch(
+                        checked = iqamahAlarmEnabled,
+                        onCheckedChange = { chk ->
+                            viewModel.triggerHaptic()
+                            iqamahAlarmEnabled = chk
+                            AdhanManager.setIqamahAlarmEnabled(context, chk)
+                            AdhanManager.scheduleNextAlarm(context)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = LightWhite, checkedTrackColor = EmeraldSecondary)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Post-Adhan Dua auto playback
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.VolunteerActivism, contentDescription = "دعاء بعد الأذان", tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text("دعاء ما بعد الأذان", color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("تشغيل الدعاء المأثور تلقائيًا فور انتهاء صوت الأذان.", color = TextColorSecondary, fontSize = 9.sp)
+                        }
+                    }
+                    Switch(
+                        checked = postAdhanDuaEnabled,
+                        onCheckedChange = { chk ->
+                            viewModel.triggerHaptic()
+                            postAdhanDuaEnabled = chk
+                            AdhanManager.setPostAdhanDuaEnabled(context, chk)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = LightWhite, checkedTrackColor = EmeraldSecondary)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Evening Azkar audio alarm 30 minutes before Maghrib
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.WbTwilight, contentDescription = "أذكار المساء", tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text("أذكار المساء الصوتية", color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("تشغيل تلقائي قبل أذان المغرب بنصف ساعة (٣٠ دقيقة).", color = TextColorSecondary, fontSize = 9.sp)
+                        }
+                    }
+                    Switch(
+                        checked = eveningAzkarAlarmEnabled,
+                        onCheckedChange = { chk ->
+                            viewModel.triggerHaptic()
+                            eveningAzkarAlarmEnabled = chk
+                            AdhanManager.setEveningAzkarAlarmEnabled(context, chk)
+                            AdhanManager.scheduleNextAlarm(context)
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = LightWhite, checkedTrackColor = EmeraldSecondary)
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))

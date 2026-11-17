@@ -32,20 +32,17 @@ class AdhanAlarmActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                val isAthanPlaying by AdhanPlayerService.isAthanPlaying.collectAsState()
-                val isIqamahPlaying by AdhanPlayerService.isIqamahPlaying.collectAsState()
+                val activeMode by AdhanPlayerService.activeMode.collectAsState()
                 val liveArabic by AdhanPlayerService.currentAthanArabic.collectAsState()
 
                 val displayPrayer = liveArabic.ifBlank { initialPrayerArabic }
                 val locationName = AdhanManager.getSavedLocationName(this)
 
-                // If Adhan was stopped from notification bar, close this alarm activity automatically
-                LaunchedEffect(isAthanPlaying, isIqamahPlaying) {
-                    if (!isAthanPlaying && !isIqamahPlaying) {
-                        kotlinx.coroutines.delay(400L)
-                        if (!AdhanPlayerService.isAthanPlaying.value &&
-                            !AdhanPlayerService.isIqamahPlaying.value
-                        ) {
+                // Close automatically when playback finishes or is stopped from the notification bar
+                LaunchedEffect(activeMode) {
+                    if (activeMode == AdhanPlayerService.AlarmAudioMode.IDLE) {
+                        kotlinx.coroutines.delay(450L)
+                        if (AdhanPlayerService.activeMode.value == AdhanPlayerService.AlarmAudioMode.IDLE) {
                             finish()
                         }
                     }
@@ -53,7 +50,8 @@ class AdhanAlarmActivity : ComponentActivity() {
 
                 AdhanAlarmScreen(
                     prayerArabic = displayPrayer,
-                    isIqamah = isIqamahPlaying,
+                    isIqamah = activeMode == AdhanPlayerService.AlarmAudioMode.IQAMAH,
+                    audioMode = activeMode,
                     locationName = locationName,
                     onStopClick = {
                         AdhanPlayerService.stopAthan(this)

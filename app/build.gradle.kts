@@ -54,6 +54,14 @@ android {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
+  sourceSets {
+    getByName("main") {
+      assets.srcDirs("src/main/assets", "../public/assets")
+    }
+  }
+  androidResources {
+    noCompress += listOf("mp3")
+  }
   buildFeatures {
     compose = true
     buildConfig = true

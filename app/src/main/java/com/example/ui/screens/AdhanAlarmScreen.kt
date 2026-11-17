@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.service.AdhanPlayerService
 import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
@@ -39,6 +40,11 @@ import kotlinx.coroutines.delay
 fun AdhanAlarmScreen(
     prayerArabic: String,
     isIqamah: Boolean = false,
+    audioMode: AdhanPlayerService.AlarmAudioMode = if (isIqamah) {
+        AdhanPlayerService.AlarmAudioMode.IQAMAH
+    } else {
+        AdhanPlayerService.AlarmAudioMode.ADHAN
+    },
     locationName: String = "مكة المكرمة",
     onStopClick: () -> Unit,
     onAfterPrayerClick: (() -> Unit)? = null
@@ -138,7 +144,12 @@ fun AdhanAlarmScreen(
                 ) {
                     IslamicStarStarIcon(modifier = Modifier.size(16.dp))
                     Text(
-                        text = if (isIqamah) "إقامة الصلاة المفروضة 📣" else "نداء الحق والأذان 🕌",
+                        text = when (audioMode) {
+                            AdhanPlayerService.AlarmAudioMode.IQAMAH -> "إقامة الصلاة المفروضة 📣"
+                            AdhanPlayerService.AlarmAudioMode.POST_ADHAN_DUA -> "دعاء ما بعد الأذان 🤲"
+                            AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> "أذكار المساء المباركة 🌅"
+                            else -> "نداء الحق والأذان 🕌"
+                        },
                         color = GoldAccent,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -189,7 +200,12 @@ fun AdhanAlarmScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isIqamah) Icons.Default.Campaign else Icons.Default.Mosque,
+                            imageVector = when (audioMode) {
+                                AdhanPlayerService.AlarmAudioMode.IQAMAH -> Icons.Default.Campaign
+                                AdhanPlayerService.AlarmAudioMode.POST_ADHAN_DUA -> Icons.Default.VolunteerActivism
+                                AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> Icons.Default.WbTwilight
+                                else -> Icons.Default.Mosque
+                            },
                             contentDescription = "الأذان",
                             tint = GoldAccent,
                             modifier = Modifier.size(56.dp)
@@ -199,7 +215,12 @@ fun AdhanAlarmScreen(
                     Spacer(modifier = Modifier.height(20.dp))
 
                     Text(
-                        text = if (isIqamah) "حان الآن موعد إقامة صلاة" else "حان الآن موعد أذان صلاة",
+                        text = when (audioMode) {
+                            AdhanPlayerService.AlarmAudioMode.IQAMAH -> "حان الآن موعد إقامة صلاة"
+                            AdhanPlayerService.AlarmAudioMode.POST_ADHAN_DUA -> "يُتلى الآن دعاء ما بعد أذان"
+                            AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> "باقي ٣٠ دقيقة على أذان المغرب"
+                            else -> "حان الآن موعد أذان صلاة"
+                        },
                         color = LightWhite.copy(alpha = 0.85f),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
@@ -271,7 +292,12 @@ fun AdhanAlarmScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "صوت الأذان يصدح الآن • الصلاة خير من النوم والعمل 🌿",
+                        text = when (audioMode) {
+                            AdhanPlayerService.AlarmAudioMode.IQAMAH -> "قد قامت الصلاة • أقم صلاتك بخشوع وطمأنينة 🕌"
+                            AdhanPlayerService.AlarmAudioMode.POST_ADHAN_DUA -> "ردّد الدعاء بعد الأذان تنل شفاعة النبي ﷺ 🤲"
+                            AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> "حصّن مساءك بذكر الله قبل أذان المغرب 🌅"
+                            else -> "صوت الأذان يصدح الآن • الصلاة خير من النوم والعمل 🌿"
+                        },
                         color = TextColorSecondary,
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center
@@ -281,7 +307,7 @@ fun AdhanAlarmScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Post Adhan Duaa Snippet Card
+            // Post Adhan Duaa / Evening Azkar Snippet Card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -292,14 +318,22 @@ fun AdhanAlarmScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "دعاء ما بعد الأذان المستجاب 🤲",
+                        text = if (audioMode == AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR) {
+                            "من أذكار المساء المباركة 🌅"
+                        } else {
+                            "دعاء ما بعد الأذان المستجاب 🤲"
+                        },
                         color = GoldAccent,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "« اللَّهُمَّ رَبَّ هَذِهِ الدَّعْوَةِ التَّامَّةِ، وَالصَّلَاةِ الْقَائِمَةِ، آتِ مُحَمَّدًا الْوَسِيلَةَ وَالْفَضِيلَةَ، وَابْعَثْهُ مَقَامًا مَحْمُودًا الَّذِي وَعَدْتَهُ »",
+                        text = if (audioMode == AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR) {
+                            "« أَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ »"
+                        } else {
+                            "« اللَّهُمَّ رَبَّ هَذِهِ الدَّعْوَةِ التَّامَّةِ، وَالصَّلَاةِ الْقَائِمَةِ، آتِ مُحَمَّدًا الْوَسِيلَةَ وَالْفَضِيلَةَ، وَابْعَثْهُ مَقَامًا مَحْمُودًا الَّذِي وَعَدْتَهُ »"
+                        },
                         color = TextColorPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
@@ -340,7 +374,12 @@ fun AdhanAlarmScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isIqamah) "إيقاف الإقامة والإغلاق 🔇" else "إغلاق وكتم صوت الأذان 🔇",
+                            text = when (audioMode) {
+                                AdhanPlayerService.AlarmAudioMode.IQAMAH -> "إيقاف الإقامة والإغلاق 🔇"
+                                AdhanPlayerService.AlarmAudioMode.POST_ADHAN_DUA -> "إيقاف الدعاء والإغلاق 🔇"
+                                AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> "إيقاف أذكار المساء والإغلاق 🔇"
+                                else -> "إغلاق وكتم صوت الأذان 🔇"
+                            },
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold

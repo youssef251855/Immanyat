@@ -57,6 +57,17 @@ BACKEND_BASE_URL=https://emaniat-api.<your-subdomain>.workers.dev
 - **Privacy Policy URL:** `https://emaniat-api.<your-subdomain>.workers.dev/privacy`
 - **Delete Account URL:** `https://emaniat-api.<your-subdomain>.workers.dev/delete-account`
 
+## النشر التلقائي عبر GitHub Actions (Workflow)
+يتوفر ملفان جاهزان للنشر التلقائي إلى Cloudflare Workers:
+- داخل المشروع الكامل: `.github/workflows/deploy-cloudflare-worker.yml` (يعمل تلقائياً عند التعديل على `cloudflare-worker/**` أو يدوياً من تبويب Actions).
+- داخل مجلد الباك المستقل: `cloudflare-worker/.github/workflows/deploy-cloudflare.yml` (إذا تم رفع مجلد `cloudflare-worker` كمستودع مستقل على GitHub).
+
+### الأسرار المطلوبة في GitHub (`Settings -> Secrets and variables -> Actions`)
+- `CLOUDFLARE_API_TOKEN` — رمز API بصلاحية **Edit Cloudflare Workers**.
+- `CLOUDFLARE_ACCOUNT_ID` — معرف حسابك في Cloudflare (Account ID).
+- `GEMINI_API_KEY` — مفتاح Gemini السري (يُرفع كـ Secret داخل Cloudflare ولا يدخل في APK).
+- `APP_CLIENT_TOKEN` *(أو `BACKEND_CLIENT_TOKEN` — اختياري)* — رمز الحماية المشترك بين التطبيق والخادم.
+
 ## تشغيل الاختبارات محلياً
 ```bash
 npm test

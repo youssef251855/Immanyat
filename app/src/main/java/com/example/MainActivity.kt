@@ -64,8 +64,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val context = LocalContext.current
-                val isAthanPlaying by com.example.service.AdhanPlayerService.isAthanPlaying.collectAsState()
-                val isIqamahPlaying by com.example.service.AdhanPlayerService.isIqamahPlaying.collectAsState()
+                val activeAlarmMode by com.example.service.AdhanPlayerService.activeMode.collectAsState()
                 val currentAthanArabic by com.example.service.AdhanPlayerService.currentAthanArabic.collectAsState()
 
                 // Request Notification Permission on Android 13+ (API 33+)
@@ -89,35 +88,74 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Foreground exact-second prayer watcher as an immediate backup alongside AlarmManager
+                // Foreground exact-second watcher for Adhan, Iqamah, and Evening Azkar alongside AlarmManager
                 LaunchedEffect(Unit) {
                     while (true) {
                         try {
                             val now = System.currentTimeMillis()
                             val prayers = com.example.data.AdhanManager.calculatePrayerTimesForDate(context, java.util.Date(now))
-                            val matchingPrayer = prayers.firstOrNull { p ->
-                                p.name != "Sunrise" &&
-                                    p.isEnabled &&
-                                    now >= p.timeMillis &&
-                                    (now - p.timeMillis) <= 45_000L &&
-                                    !com.example.data.AdhanManager.wasPrayerTriggeredToday(context, p.name)
-                            }
-                            if (matchingPrayer != null &&
-                                !com.example.service.AdhanPlayerService.isAthanPlaying.value &&
-                                !com.example.service.AdhanPlayerService.isIqamahPlaying.value
-                            ) {
+                            val serviceIdle = com.example.service.AdhanPlayerService.activeMode.value ==
+                                com.example.service.AdhanPlayerService.AlarmAudioMode.IDLE
+
+                            if (serviceIdle) {
                                 val cal = java.util.Calendar.getInstance()
                                 val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
                                 val quietSleep = com.example.data.AdhanManager.isSilentDuringSleep(context) && (hour >= 23 || hour < 5)
-                                com.example.data.AdhanManager.markPrayerTriggeredToday(context, matchingPrayer.name)
-                                if (!quietSleep) {
-                                    com.example.service.AdhanPlayerService.startAthan(
-                                        context,
-                                        matchingPrayer.name,
-                                        matchingPrayer.arabicName
-                                    )
+
+                                val matchingPrayer = prayers.firstOrNull { p ->
+                                    p.name != "Sunrise" &&
+                                        p.isEnabled &&
+                                        now >= p.timeMillis &&
+                                        (now - p.timeMillis) <= 45_000L &&
+                                        !com.example.data.AdhanManager.wasPrayerTriggeredToday(context, p.name)
                                 }
-                                com.example.data.AdhanManager.scheduleNextAlarm(context)
+                                if (matchingPrayer != null) {
+                                    com.example.data.AdhanManager.markPrayerTriggeredToday(context, matchingPrayer.name)
+                                    if (!quietSleep) {
+                                        com.example.service.AdhanPlayerService.startAthan(
+                                            context,
+                                            matchingPrayer.name,
+                                            matchingPrayer.arabicName
+                                        )
+                                    }
+                                    com.example.data.AdhanManager.scheduleNextAlarm(context)
+                                } else {
+                                    val matchingIqamah = if (com.example.data.AdhanManager.isIqamahAlarmEnabled(context)) {
+                                        prayers.firstOrNull { p ->
+                                            if (p.name == "Sunrise" || !p.isEnabled) return@firstOrNull false
+                                            val iqamahTime = p.timeMillis +
+                                                com.example.data.AdhanManager.getIqamahDelayMinutes(context, p.name) * 60_000L
+                                            now >= iqamahTime &&
+                                                (now - iqamahTime) <= 45_000L &&
+                                                !com.example.data.AdhanManager.wasIqamahTriggeredToday(context, p.name)
+                                        }
+                                    } else null
+                                    if (matchingIqamah != null) {
+                                        com.example.data.AdhanManager.markIqamahTriggeredToday(context, matchingIqamah.name)
+                                        if (!quietSleep) {
+                                            com.example.service.AdhanPlayerService.startIqamah(
+                                                context,
+                                                matchingIqamah.name,
+                                                matchingIqamah.arabicName
+                                            )
+                                        }
+                                        com.example.data.AdhanManager.scheduleNextAlarm(context)
+                                    } else if (com.example.data.AdhanManager.isEveningAzkarAlarmEnabled(context)) {
+                                        val maghrib = prayers.firstOrNull { it.name == "Maghrib" }
+                                        val azkarTime = maghrib?.let {
+                                            it.timeMillis - com.example.data.AdhanManager.EVENING_AZKAR_BEFORE_MAGHRIB_MINUTES * 60_000L
+                                        }
+                                        if (azkarTime != null &&
+                                            now >= azkarTime &&
+                                            (now - azkarTime) <= 45_000L &&
+                                            !com.example.data.AdhanManager.wasEveningAzkarTriggeredToday(context)
+                                        ) {
+                                            com.example.data.AdhanManager.markEveningAzkarTriggeredToday(context)
+                                            com.example.service.AdhanPlayerService.startEveningAzkar(context)
+                                            com.example.data.AdhanManager.scheduleNextAlarm(context)
+                                        }
+                                    }
+                                }
                             }
                         } catch (_: Throwable) {}
                         delay(1000L)
@@ -126,10 +164,11 @@ class MainActivity : ComponentActivity() {
 
                 var isSplashFinished by remember { mutableStateOf(false) }
 
-                if (isAthanPlaying || isIqamahPlaying) {
+                if (activeAlarmMode != com.example.service.AdhanPlayerService.AlarmAudioMode.IDLE) {
                     com.example.ui.screens.AdhanAlarmScreen(
                         prayerArabic = currentAthanArabic.ifBlank { "الصلاة" },
-                        isIqamah = isIqamahPlaying,
+                        isIqamah = activeAlarmMode == com.example.service.AdhanPlayerService.AlarmAudioMode.IQAMAH,
+                        audioMode = activeAlarmMode,
                         locationName = com.example.data.AdhanManager.getSavedLocationName(context),
                         onStopClick = {
                             com.example.service.AdhanPlayerService.stopAthan(context)
@@ -445,9 +484,11 @@ fun EmaniatApp(
                 }
                 AppScreen.ADHAN_ALARM -> {
                     val currentArabic by com.example.service.AdhanPlayerService.currentAthanArabic.collectAsState()
+                    val mode by com.example.service.AdhanPlayerService.activeMode.collectAsState()
                     com.example.ui.screens.AdhanAlarmScreen(
                         prayerArabic = currentArabic.ifBlank { "العصر" },
-                        isIqamah = false,
+                        isIqamah = mode == com.example.service.AdhanPlayerService.AlarmAudioMode.IQAMAH,
+                        audioMode = mode,
                         locationName = com.example.data.AdhanManager.getSavedLocationName(context),
                         onStopClick = {
                             com.example.service.AdhanPlayerService.stopAthan(context)

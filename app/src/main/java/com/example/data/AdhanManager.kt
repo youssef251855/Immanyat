@@ -14,14 +14,8 @@ import com.batoulapps.adhan.Coordinates
 import com.batoulapps.adhan.Madhab
 import com.batoulapps.adhan.PrayerTimes
 import com.batoulapps.adhan.data.DateComponents
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 data class PrayerTimeInfo(
     val name: String,
@@ -106,6 +100,26 @@ object AdhanManager {
         getPrefs(context).edit().putString("last_triggered_$prayerKey", today).apply()
     }
 
+    fun wasIqamahTriggeredToday(context: Context, prayerKey: String): Boolean {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        return getPrefs(context).getString("last_iqamah_triggered_$prayerKey", "") == today
+    }
+
+    fun markIqamahTriggeredToday(context: Context, prayerKey: String) {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        getPrefs(context).edit().putString("last_iqamah_triggered_$prayerKey", today).apply()
+    }
+
+    fun wasEveningAzkarTriggeredToday(context: Context): Boolean {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        return getPrefs(context).getString("last_evening_azkar_triggered", "") == today
+    }
+
+    fun markEveningAzkarTriggeredToday(context: Context) {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        getPrefs(context).edit().putString("last_evening_azkar_triggered", today).apply()
+    }
+
     // --- Calculation and Madhab configs ---
     fun getCalculationMethod(context: Context): String {
         return getPrefs(context).getString("calc_method", "UMM_AL_QURA") ?: "UMM_AL_QURA"
@@ -133,186 +147,141 @@ object AdhanManager {
         getPrefs(context).edit().putBoolean("pray_enabled_$prayerKey", enabled).apply()
     }
 
-    // --- Muadhin parameters ---
+    // --- Muadhin parameters (100% offline bundled MP3s in assets/Sounds/) ---
+    fun normalizeMuadhinName(rawName: String?): String {
+        return when (rawName?.trim()) {
+            "مشاري العفاسي" -> "مشاري العفاسي"
+            "عبد الباسط" -> "عبد الباسط"
+            "مؤذن مكة" -> "مؤذن مكة"
+            "مؤذن المدينة" -> "مؤذن المدينة"
+            // Map legacy/previous names cleanly onto bundled offline voices
+            "أذان المسجد الأقصى" -> "مؤذن مكة"
+            "النقشبندي" -> "عبد الباسط"
+            else -> "مشاري العفاسي"
+        }
+    }
+
     fun getMuadhinForPrayer(context: Context, prayerKey: String): String {
-        // Defaults: Mishary Al-Afasy, Abdul Basit, Al-Naqshabandi, Mecca, Medina
-        return getPrefs(context).getString("pray_muadhin_$prayerKey", "مشاري العفاسي") ?: "مشاري العفاسي"
+        val stored = getPrefs(context).getString("pray_muadhin_$prayerKey", "مشاري العفاسي")
+        return normalizeMuadhinName(stored)
     }
 
     fun setMuadhinForPrayer(context: Context, prayerKey: String, muadhin: String) {
-        getPrefs(context).edit().putString("pray_muadhin_$prayerKey", muadhin).apply()
+        getPrefs(context).edit().putString("pray_muadhin_$prayerKey", normalizeMuadhinName(muadhin)).apply()
     }
 
     fun setMuadhinForAllPrayers(context: Context, muadhin: String) {
+        val normalized = normalizeMuadhinName(muadhin)
         val editor = getPrefs(context).edit()
         listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha").forEach { key ->
-            editor.putString("pray_muadhin_$key", muadhin)
+            editor.putString("pray_muadhin_$key", normalized)
         }
         editor.apply()
     }
 
     fun getPrayersUsingMuadhinCount(context: Context, muadhin: String): Int {
+        val normalized = normalizeMuadhinName(muadhin)
         return listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")
-            .count { getMuadhinForPrayer(context, it) == muadhin }
+            .count { getMuadhinForPrayer(context, it) == normalized }
     }
 
     data class MuadhinVoice(
         val name: String,
         val subtitle: String,
-        val urls: List<String>
+        val assetPath: String
     )
 
     val MUADHIN_VOICES = listOf(
         MuadhinVoice(
             name = "مشاري العفاسي",
-            subtitle = "الكويت • نبرة خاشعة صافية",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan2.mp3")
+            subtitle = "الكويت • نبرة خاشعة صافية • مدمج بالكامل",
+            assetPath = "Sounds/adhan_mishary.mp3"
         ),
         MuadhinVoice(
             name = "عبد الباسط",
-            subtitle = "مصر • أداء مجود عريق",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan3.mp3")
-        ),
-        MuadhinVoice(
-            name = "النقشبندي",
-            subtitle = "مصر • مقام روحاني مألوف",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan15.mp3")
+            subtitle = "مصر • أداء مجود عريق • مدمج بالكامل",
+            assetPath = "Sounds/adhan_abdulbasit.mp3"
         ),
         MuadhinVoice(
             name = "مؤذن مكة",
-            subtitle = "الحرم المكي الشريف",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan1.mp3")
+            subtitle = "الحرم المكي الشريف • مدمج بالكامل",
+            assetPath = "Sounds/adhan_makkah.mp3"
         ),
         MuadhinVoice(
             name = "مؤذن المدينة",
-            subtitle = "المسجد النبوي المبارك",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan13.mp3")
-        ),
-        MuadhinVoice(
-            name = "أذان المسجد الأقصى",
-            subtitle = "القدس الشريف • نداء مبارك",
-            urls = listOf("https://www.islamcan.com/audio/adhan/azan12.mp3")
+            subtitle = "المسجد النبوي المبارك • مدمج بالكامل",
+            assetPath = "Sounds/adhan_madinah.mp3"
         )
     )
 
-    // Muadhin play list and audio streaming URLs
-    val MUADHIN_URLS = MUADHIN_VOICES.associate { it.name to it.urls.first() }
+    val MUADHIN_ASSETS = MUADHIN_VOICES.associate { it.name to it.assetPath }
 
     fun getMuadhinSubtitle(muadhinName: String): String {
-        return MUADHIN_VOICES.firstOrNull { it.name == muadhinName }?.subtitle ?: "أذان إسلامي مختار"
+        val normalized = normalizeMuadhinName(muadhinName)
+        return MUADHIN_VOICES.firstOrNull { it.name == normalized }?.subtitle ?: "أذان إسلامي مدمج"
     }
 
-    fun getMuadhinStreamUrl(muadhinName: String): String? {
-        return MUADHIN_URLS[muadhinName]
+    fun getMuadhinAssetPath(muadhinName: String): String {
+        val normalized = normalizeMuadhinName(muadhinName)
+        return MUADHIN_ASSETS[normalized] ?: "Sounds/adhan_mishary.mp3"
     }
 
-    // --- Offline audio downloading system ---
-    fun getLocalAthanFile(context: Context, muadhinName: String): File {
-        val sanitized = muadhinName.replace(" ", "_").lowercase()
-        return File(context.filesDir, "adhan_$sanitized.mp3")
+    const val ASSET_IQAMAH_AUDIO = "Sounds/iqama salat.mp3"
+    const val ASSET_POST_ADHAN_DUA_AUDIO = "Sounds/post_adhan_dua.mp3"
+    const val ASSET_EVENING_AZKAR_AUDIO = "Sounds/9.mp3"
+    const val EVENING_AZKAR_BEFORE_MAGHRIB_MINUTES = 30
+
+    val DEFAULT_IQAMAH_DELAY_MINUTES = mapOf(
+        "Fajr" to 15,
+        "Dhuhr" to 15,
+        "Asr" to 15,
+        "Maghrib" to 12,
+        "Isha" to 15
+    )
+
+    fun getIqamahDelayMinutes(context: Context, prayerKey: String): Int {
+        val defaultMins = DEFAULT_IQAMAH_DELAY_MINUTES[prayerKey] ?: 15
+        return getPrefs(context).getInt("iqamah_delay_$prayerKey", defaultMins).coerceIn(1, 60)
     }
 
-    fun isAthanDownloaded(context: Context, muadhinName: String): Boolean {
-        val file = getLocalAthanFile(context, muadhinName)
-        return file.exists() && file.length() > 50 * 1024 // At least 50KB to make sure it's valid MP3
+    fun setIqamahDelayMinutes(context: Context, prayerKey: String, minutes: Int) {
+        getPrefs(context).edit().putInt("iqamah_delay_$prayerKey", minutes.coerceIn(1, 60)).apply()
     }
 
-    suspend fun downloadAthan(context: Context, muadhinName: String, onProgress: (Float) -> Unit): Boolean {
-        val voiceUrls = MUADHIN_VOICES.firstOrNull { it.name == muadhinName }?.urls
-            ?: MUADHIN_URLS[muadhinName]?.let { listOf(it) }
-            ?: return false
+    fun isIqamahAlarmEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean("iqamah_alarm_enabled", true)
+    }
 
-        if (!NetworkUtils.isNetworkAvailable(context)) {
-            return false
-        }
+    fun setIqamahAlarmEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean("iqamah_alarm_enabled", enabled).apply()
+    }
 
-        val targetFile = getLocalAthanFile(context, muadhinName)
-        val tempFile = File(context.filesDir, "${targetFile.name}.tmp")
+    fun isPostAdhanDuaEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean("post_adhan_dua_enabled", true)
+    }
 
-        return withContext(Dispatchers.IO) {
-            for (urlString in voiceUrls) {
-                var connection: HttpURLConnection? = null
-                try {
-                    var currentUrl = URL(urlString)
-                    var redirects = 0
-                    while (redirects < 4) {
-                        val conn = currentUrl.openConnection() as HttpURLConnection
-                        conn.instanceFollowRedirects = false
-                        conn.connectTimeout = 15000
-                        conn.readTimeout = 20000
-                        conn.setRequestProperty("User-Agent", "Imaniyat-Android/1.0")
-                        conn.connect()
+    fun setPostAdhanDuaEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean("post_adhan_dua_enabled", enabled).apply()
+    }
 
-                        val code = conn.responseCode
-                        if (code == HttpURLConnection.HTTP_MOVED_TEMP ||
-                            code == HttpURLConnection.HTTP_MOVED_PERM ||
-                            code == HttpURLConnection.HTTP_SEE_OTHER ||
-                            code == 307 || code == 308
-                        ) {
-                            val location = conn.getHeaderField("Location")
-                            conn.disconnect()
-                            if (location.isNullOrBlank()) break
-                            val nextUrl = URL(currentUrl, location)
-                            if (nextUrl.protocol != "https") break
-                            currentUrl = nextUrl
-                            redirects++
-                            continue
-                        }
-                        connection = conn
-                        break
-                    }
+    fun isEveningAzkarAlarmEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean("evening_azkar_alarm_enabled", true)
+    }
 
-                    val activeConn = connection ?: continue
-                    if (activeConn.responseCode != HttpURLConnection.HTTP_OK) {
-                        activeConn.disconnect()
-                        continue
-                    }
+    fun setEveningAzkarAlarmEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean("evening_azkar_alarm_enabled", enabled).apply()
+    }
 
-                    val fileLength = activeConn.contentLength
-                    activeConn.inputStream.use { input ->
-                        FileOutputStream(tempFile).use { output ->
-                            val data = ByteArray(8192)
-                            var total: Long = 0
-                            var count: Int
-                            while (input.read(data).also { count = it } != -1) {
-                                total += count
-                                if (fileLength > 0) {
-                                    onProgress((total.toFloat() / fileLength).coerceIn(0f, 1f))
-                                }
-                                output.write(data, 0, count)
-                            }
-                            output.flush()
-                        }
-                    }
-
-                    if (tempFile.exists() && tempFile.length() > 20 * 1024) {
-                        if (targetFile.exists()) targetFile.delete()
-                        if (tempFile.renameTo(targetFile)) {
-                            onProgress(1f)
-                            return@withContext true
-                        }
-                    }
-                    if (tempFile.exists()) tempFile.delete()
-                } catch (e: Exception) {
-                    Log.e("AdhanManager", "Download failed for $muadhinName from $urlString", e)
-                    if (tempFile.exists()) {
-                        tempFile.delete()
-                    }
-                } finally {
-                    try {
-                        connection?.disconnect()
-                    } catch (_: Throwable) {}
-                }
-            }
+    fun isAssetAvailable(context: Context, assetPath: String): Boolean {
+        return try {
+            context.assets.openFd(assetPath).use { it.length > 0L }
+        } catch (_: Throwable) {
             false
         }
     }
 
-    fun deleteAthan(context: Context, muadhinName: String) {
-        val file = getLocalAthanFile(context, muadhinName)
-        if (file.exists()) {
-            file.delete()
-        }
+    fun isMuadhinAssetAvailable(context: Context, muadhinName: String): Boolean {
+        return isAssetAvailable(context, getMuadhinAssetPath(muadhinName))
     }
 
     // --- Audio volume & progressive volume & alerts configurations ---
@@ -456,7 +425,12 @@ object AdhanManager {
             val key = item.first
             val arName = item.second
             var rawTime = item.third ?: Date()
-            
+            val normCal = Calendar.getInstance().apply {
+                time = rawTime
+                set(Calendar.MILLISECOND, 0)
+            }
+            rawTime = normCal.time
+
             // Apply Manual Offsets
             val offsetMin = getManualOffset(context, key)
             if (offsetMin != 0) {
@@ -522,6 +496,53 @@ object AdhanManager {
         return null
     }
 
+    fun getNextIqamah(context: Context, bufferSeconds: Long = 10L): Pair<PrayerTimeInfo, Long>? {
+        val now = System.currentTimeMillis()
+        val threshold = now + (bufferSeconds * 1000L)
+        val formatter = SimpleDateFormat("hh:mm a", Locale.US)
+
+        val todayPrayers = calculatePrayerTimesForDate(context, Date())
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, 1)
+        val tomorrowPrayers = calculatePrayerTimesForDate(context, cal.time)
+
+        val candidates = (todayPrayers + tomorrowPrayers)
+            .filter { it.name != "Sunrise" && isPrayerEnabled(context, it.name) }
+            .map { prayer ->
+                val delayMins = getIqamahDelayMinutes(context, prayer.name)
+                val iqamahMillis = prayer.timeMillis + (delayMins * 60_000L)
+                PrayerTimeInfo(
+                    name = prayer.name,
+                    arabicName = prayer.arabicName,
+                    timeMillis = iqamahMillis,
+                    formattedTime = formatter.format(Date(iqamahMillis)),
+                    isEnabled = prayer.isEnabled
+                )
+            }
+            .filter { it.timeMillis > threshold }
+            .sortedBy { it.timeMillis }
+
+        val next = candidates.firstOrNull() ?: return null
+        return Pair(next, (next.timeMillis - now).coerceAtLeast(0L))
+    }
+
+    fun getNextEveningAzkarTime(context: Context, bufferSeconds: Long = 10L): Pair<Long, Long>? {
+        val now = System.currentTimeMillis()
+        val threshold = now + (bufferSeconds * 1000L)
+
+        val todayMaghrib = calculatePrayerTimesForDate(context, Date()).firstOrNull { it.name == "Maghrib" }
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, 1)
+        val tomorrowMaghrib = calculatePrayerTimesForDate(context, cal.time).firstOrNull { it.name == "Maghrib" }
+
+        val nextTrigger = listOfNotNull(todayMaghrib, tomorrowMaghrib)
+            .map { it.timeMillis - (EVENING_AZKAR_BEFORE_MAGHRIB_MINUTES * 60_000L) }
+            .firstOrNull { it > threshold }
+            ?: return null
+
+        return Pair(nextTrigger, (nextTrigger - now).coerceAtLeast(0L))
+    }
+
     // --- Qibla Direction in Degrees ---
     fun calculateQiblaDirection(context: Context): Double {
         val coords = getSavedCoordinates(context)
@@ -544,99 +565,123 @@ object AdhanManager {
         return qiblaDeg
     }
 
+    @SuppressLint("ScheduleExactAlarm")
+    private fun scheduleAlarmClockExact(
+        alarmManager: AlarmManager,
+        triggerMillis: Long,
+        pendingIntent: PendingIntent,
+        showPendingIntent: PendingIntent
+    ) {
+        try {
+            val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMillis, showPendingIntent)
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+        } catch (e: Throwable) {
+            Log.w("AdhanManager", "setAlarmClock failed, falling back", e)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                    } else {
+                        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                    }
+                } else {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                }
+            } catch (e2: Throwable) {
+                Log.e("AdhanManager", "Failed entirely to schedule alarm", e2)
+            }
+        }
+    }
+
     // --- Android Exact Alarm Rescheduler ---
     @SuppressLint("ScheduleExactAlarm")
     fun scheduleNextAlarm(context: Context) {
         try {
-            val nextPair = getNextPrayer(context, 20L) ?: return
-            val nextPrayer = nextPair.first
-            val nextTimeMillis = nextPrayer.timeMillis
-
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-            
-            // Alarm intent to trigger BroadcastReceiver custom action
-            val intent = Intent(context, AdhanAlarmReceiver::class.java).apply {
-                action = "com.example.ACTION_TRIGGER_ATHAN"
-                putExtra("PRAYER_NAME", nextPrayer.name)
-                putExtra("PRAYER_ARABIC", nextPrayer.arabicName)
-                putExtra("PRAYER_TIME", nextTimeMillis)
-            }
-
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            val pendingIntent = PendingIntent.getBroadcast(context, 1001, intent, flags)
 
-            // Intent to open app when clicking alarm icon in lockscreen or notification
             val showIntent = Intent(context, com.example.MainActivity::class.java).apply {
                 setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra("OPEN_SCREEN", "ADHAN_SETTINGS")
             }
             val showPendingIntent = PendingIntent.getActivity(context, 1003, showIntent, flags)
 
-            // Set via AlarmClockInfo:
-            // 1) Exempts app from Background Foreground Service Start Restrictions (Android 12/13/14)
-            // 2) Bypasses Doze Mode and deep sleep restrictions reliably
-            // 3) Exactly triggers at the millisecond
-            try {
-                val alarmClockInfo = AlarmManager.AlarmClockInfo(nextTimeMillis, showPendingIntent)
-                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-                Log.d("AdhanManager", "setAlarmClock succeeded for ${nextPrayer.arabicName} at ${nextPrayer.formattedTime} ($nextTimeMillis)")
-            } catch (e: Throwable) {
-                Log.w("AdhanManager", "setAlarmClock failed, falling back to setExactAndAllowWhileIdle", e)
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        if (alarmManager.canScheduleExactAlarms()) {
-                            alarmManager.setExactAndAllowWhileIdle(
-                                AlarmManager.RTC_WAKEUP,
-                                nextTimeMillis,
-                                pendingIntent
-                            )
-                        } else {
-                            alarmManager.setAndAllowWhileIdle(
-                                AlarmManager.RTC_WAKEUP,
-                                nextTimeMillis,
-                                pendingIntent
-                            )
-                        }
-                    } else {
-                        alarmManager.setExactAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP,
-                            nextTimeMillis,
-                            pendingIntent
-                        )
+            val nextPair = getNextPrayer(context, 20L)
+            if (nextPair != null) {
+                val nextPrayer = nextPair.first
+                val nextTimeMillis = nextPrayer.timeMillis
+
+                val intent = Intent(context, AdhanAlarmReceiver::class.java).apply {
+                    action = "com.example.ACTION_TRIGGER_ATHAN"
+                    putExtra("TRIGGER_MODE", "ADHAN")
+                    putExtra("PRAYER_NAME", nextPrayer.name)
+                    putExtra("PRAYER_ARABIC", nextPrayer.arabicName)
+                    putExtra("PRAYER_TIME", nextTimeMillis)
+                }
+                val pendingIntent = PendingIntent.getBroadcast(context, 1001, intent, flags)
+                scheduleAlarmClockExact(alarmManager, nextTimeMillis, pendingIntent, showPendingIntent)
+                Log.d("AdhanManager", "Scheduled next Adhan for ${nextPrayer.arabicName} at ${nextPrayer.formattedTime}")
+
+                // Pre-Adhan alert notification if configured
+                val preMinutes = getPreAdhanMinutes(context)
+                val preIntent = Intent(context, AdhanAlarmReceiver::class.java).apply {
+                    action = "com.example.ACTION_TRIGGER_ATHAN"
+                    putExtra("PRAYER_NAME", nextPrayer.name)
+                    putExtra("PRAYER_ARABIC", nextPrayer.arabicName)
+                    putExtra("PRAYER_TIME", nextTimeMillis)
+                    putExtra("IS_PRE_ALERT", true)
+                    putExtra("PRE_ALERT_MINUTES", preMinutes)
+                }
+                val prePendingIntent = PendingIntent.getBroadcast(context, 1002, preIntent, flags)
+                if (preMinutes > 0) {
+                    val preTimeMillis = nextTimeMillis - (preMinutes * 60 * 1000L)
+                    if (preTimeMillis > System.currentTimeMillis() + 10000L) {
+                        scheduleAlarmClockExact(alarmManager, preTimeMillis, prePendingIntent, showPendingIntent)
                     }
-                } catch (e2: Throwable) {
-                    Log.e("AdhanManager", "Failed entirely to schedule primary alarm", e2)
+                } else {
+                    alarmManager.cancel(prePendingIntent)
                 }
             }
 
-            // Also schedule pre-adhan alerts if configured (e.g. 10 mins before)
-            val preMinutes = getPreAdhanMinutes(context)
-            if (preMinutes > 0) {
-                val preTimeMillis = nextTimeMillis - (preMinutes * 60 * 1000)
-                if (preTimeMillis > System.currentTimeMillis() + 10000L) {
-                    val preIntent = Intent(context, AdhanAlarmReceiver::class.java).apply {
-                        action = "com.example.ACTION_TRIGGER_ATHAN"
-                        putExtra("PRAYER_NAME", nextPrayer.name)
-                        putExtra("PRAYER_ARABIC", nextPrayer.arabicName)
-                        putExtra("PRAYER_TIME", nextTimeMillis)
-                        putExtra("IS_PRE_ALERT", true)
-                        putExtra("PRE_ALERT_MINUTES", preMinutes)
-                    }
-                    val prePendingIntent = PendingIntent.getBroadcast(context, 1002, preIntent, flags)
-                    try {
-                        val preClockInfo = AlarmManager.AlarmClockInfo(preTimeMillis, showPendingIntent)
-                        alarmManager.setAlarmClock(preClockInfo, prePendingIntent)
-                        Log.d("AdhanManager", "Pre-Adhan setAlarmClock $preMinutes mins before ${nextPrayer.arabicName}")
-                    } catch (e3: Throwable) {
-                        try {
-                            alarmManager.setAndAllowWhileIdle(
-                                AlarmManager.RTC_WAKEUP,
-                                preTimeMillis,
-                                prePendingIntent
-                            )
-                        } catch (t: Throwable) {}
-                    }
+            // Schedule Next Iqamah Alarm (Fajr 15m, Dhuhr 15m, Asr 15m, Maghrib 12m, Isha 15m)
+            val iqamahIntentBase = Intent(context, AdhanAlarmReceiver::class.java).apply {
+                action = "com.example.ACTION_TRIGGER_ATHAN"
+                putExtra("TRIGGER_MODE", "IQAMAH")
+            }
+            if (isIqamahAlarmEnabled(context)) {
+                val nextIqamahPair = getNextIqamah(context, 10L)
+                if (nextIqamahPair != null) {
+                    val iqamahInfo = nextIqamahPair.first
+                    iqamahIntentBase.putExtra("PRAYER_NAME", iqamahInfo.name)
+                    iqamahIntentBase.putExtra("PRAYER_ARABIC", iqamahInfo.arabicName)
+                    iqamahIntentBase.putExtra("PRAYER_TIME", iqamahInfo.timeMillis)
+                    val iqamahPendingIntent = PendingIntent.getBroadcast(context, 1004, iqamahIntentBase, flags)
+                    scheduleAlarmClockExact(alarmManager, iqamahInfo.timeMillis, iqamahPendingIntent, showPendingIntent)
+                    Log.d("AdhanManager", "Scheduled next Iqamah for ${iqamahInfo.arabicName} at ${iqamahInfo.formattedTime}")
                 }
+            } else {
+                val iqamahPendingIntent = PendingIntent.getBroadcast(context, 1004, iqamahIntentBase, flags)
+                alarmManager.cancel(iqamahPendingIntent)
+            }
+
+            // Schedule Evening Azkar Audio Alarm (30 minutes before Maghrib)
+            val eveningAzkarIntentBase = Intent(context, AdhanAlarmReceiver::class.java).apply {
+                action = "com.example.ACTION_TRIGGER_ATHAN"
+                putExtra("TRIGGER_MODE", "EVENING_AZKAR")
+                putExtra("PRAYER_NAME", "Maghrib")
+                putExtra("PRAYER_ARABIC", "أذكار المساء")
+            }
+            if (isEveningAzkarAlarmEnabled(context)) {
+                val nextEveningAzkar = getNextEveningAzkarTime(context, 10L)
+                if (nextEveningAzkar != null) {
+                    eveningAzkarIntentBase.putExtra("PRAYER_TIME", nextEveningAzkar.first)
+                    val eveningPendingIntent = PendingIntent.getBroadcast(context, 1005, eveningAzkarIntentBase, flags)
+                    scheduleAlarmClockExact(alarmManager, nextEveningAzkar.first, eveningPendingIntent, showPendingIntent)
+                    Log.d("AdhanManager", "Scheduled Evening Azkar (30m before Maghrib) at ${Date(nextEveningAzkar.first)}")
+                }
+            } else {
+                val eveningPendingIntent = PendingIntent.getBroadcast(context, 1005, eveningAzkarIntentBase, flags)
+                alarmManager.cancel(eveningPendingIntent)
             }
         } catch (t: Throwable) {
             Log.e("AdhanManager", "General error inside scheduleNextAlarm", t)
@@ -652,6 +697,7 @@ object AdhanManager {
             
             val intent = Intent(context, AdhanAlarmReceiver::class.java).apply {
                 action = "com.example.ACTION_TRIGGER_ATHAN"
+                putExtra("TRIGGER_MODE", "ADHAN")
                 putExtra("PRAYER_NAME", "Asr")
                 putExtra("PRAYER_ARABIC", "العصر (تجربة)")
                 putExtra("PRAYER_TIME", triggerTime)
@@ -665,13 +711,8 @@ object AdhanManager {
             }
             val showPendingIntent = PendingIntent.getActivity(context, 1098, showIntent, flags)
 
-            try {
-                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTime, showPendingIntent)
-                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-                Log.d("AdhanManager", "Test alarmClock scheduled for $delaySeconds seconds from now")
-            } catch (e: Throwable) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-            }
+            scheduleAlarmClockExact(alarmManager, triggerTime, pendingIntent, showPendingIntent)
+            Log.d("AdhanManager", "Test alarmClock scheduled for $delaySeconds seconds from now")
         } catch (t: Throwable) {
             Log.e("AdhanManager", "Failed to schedule test alarm", t)
         }

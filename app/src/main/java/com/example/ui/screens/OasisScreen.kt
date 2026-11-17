@@ -11,7 +11,6 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
 import com.example.data.AdhanManager
-import com.example.data.NetworkUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -1673,66 +1672,39 @@ private fun saveReflectionsToPrefs(prefs: android.content.SharedPreferences, lis
 }
 
 // ==========================================
-// FEATURE 7: FAMOUS ADHAN VOICES LIBRARY
+// FEATURE 7: BUNDLED OFFLINE ADHAN VOICES LIBRARY
 // ==========================================
 @Composable
 fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
     val context = LocalContext.current
-    val sharedPrefs = remember { context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE) }
-    var selectedMuadhin by remember { mutableStateOf(sharedPrefs.getString("selected_muadhin_key", "haram_mecca") ?: "haram_mecca") }
-
-    // Media trigger states
-    var isTestingSound by remember { mutableStateOf(false) }
+    var selectedMuadhin by remember {
+        mutableStateOf(AdhanManager.getMuadhinForPrayer(context, "Fajr"))
+    }
+    var previewingName by remember { mutableStateOf<String?>(null) }
     var mediaPlayerInstance by remember { mutableStateOf<MediaPlayer?>(null) }
 
-    val muadhins = remember {
-        listOf(
-            Triple("haram_mecca", "أذان الحرم المكي الشريف", "تلاوة ونداء شيخ مؤذني مكة، تثير الطهر وسكينة الصفا والمروة."),
-            Triple("haram_medina", "أذان المسجد النبوي المبارك", "التموج الحجازي النقي المهيب، مستلهم من روضة المصطفى الشريفة."),
-            Triple("alaqsa", "أذان المسجد الأقصى الأسير", "البرق الشامي الأصيل ينسجم تتابعاً مع عبق الصخرة المشرفة."),
-            Triple(" حجازي_بديع", "الأذان الحجازي البديع الفريد", "المقامات الموسيقية المكية العتيقة المغلفة بالطهر والهيبة.")
-        )
-    }
-
-    LaunchedEffect(selectedMuadhin) {
-        mediaPlayerInstance?.let {
-            if (it.isPlaying) {
-                it.stop()
-                it.release()
-            }
-        }
-        mediaPlayerInstance = null
-        isTestingSound = false
-    }
-
-    // Stop media player when screen elements leave memory
-    DisposableEffect(Unit) {
-        onDispose {
+    fun stopDemo() {
+        try {
             mediaPlayerInstance?.let {
                 if (it.isPlaying) it.stop()
                 it.release()
             }
-        }
+        } catch (_: Throwable) {}
+        mediaPlayerInstance = null
+        previewingName = null
     }
 
-    val handlePlayDemo = { url: String ->
+    DisposableEffect(Unit) {
+        onDispose { stopDemo() }
+    }
+
+    val handlePlayDemo = { voice: AdhanManager.MuadhinVoice ->
         viewModel.triggerHaptic()
-        if (isTestingSound) {
-            try {
-                mediaPlayerInstance?.stop()
-            } catch (_: Throwable) {}
-            try {
-                mediaPlayerInstance?.release()
-            } catch (_: Throwable) {}
-            mediaPlayerInstance = null
-            isTestingSound = false
-            Toast.makeText(context, "تم إيقاف تشغيل العينة الصوتية.", Toast.LENGTH_SHORT).show()
-        } else if (!NetworkUtils.isNetworkAvailable(context)) {
-            Toast.makeText(context, "يرجى الاتصال بالإنترنت للاستماع أو تحميل الصوت من إعدادات الأذان.", Toast.LENGTH_SHORT).show()
+        if (previewingName == voice.name) {
+            stopDemo()
         } else {
+            stopDemo()
             try {
-                isTestingSound = true
-                Toast.makeText(context, "جاري تحضير واستماع عينة الأذان... 🔊", Toast.LENGTH_SHORT).show()
                 val mp = MediaPlayer().apply {
                     setAudioAttributes(
                         AudioAttributes.Builder()
@@ -1740,22 +1712,23 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
                             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                             .build()
                     )
-                    setOnPreparedListener { it.start() }
-                    setOnCompletionListener { isTestingSound = false }
-                    setOnErrorListener { player, _, _ ->
-                        isTestingSound = false
-                        try { player.release() } catch (_: Throwable) {}
-                        mediaPlayerInstance = null
-                        Toast.makeText(context, "تعذر تشغيل العينة الصوتية حالياً.", Toast.LENGTH_SHORT).show()
+                    setOnCompletionListener { stopDemo() }
+                    setOnErrorListener { _, _, _ ->
+                        stopDemo()
+                        Toast.makeText(context, "تعذر تشغيل صوت ${voice.name} حالياً.", Toast.LENGTH_SHORT).show()
                         true
                     }
-                    setDataSource(url)
-                    prepareAsync()
+                    context.assets.openFd(voice.assetPath).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        prepare()
+                    }
+                    start()
                 }
                 mediaPlayerInstance = mp
+                previewingName = voice.name
             } catch (e: Exception) {
-                isTestingSound = false
-                Toast.makeText(context, "لم نتمكن من جلب العينة الصوتية في الوقت الحالي.", Toast.LENGTH_SHORT).show()
+                stopDemo()
+                Toast.makeText(context, "تعذر فتح ملف الأذان المدمج لـ ${voice.name}.", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1768,7 +1741,7 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
     ) {
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "مكتبة أصوات الأذان وتخصيص المؤذن 🔊",
+                text = "مكتبة أصوات الأذان المدمجة (بدون إنترنت) 🔊",
                 color = GoldAccent,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
@@ -1776,7 +1749,7 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                text = "اختر المؤذن المفضل وتأمل النبرة الحجازية العتيقة للأذان التي سيتم عبرها مناداة الصلوات في مواقيت الصلاة والمحافظة عليها.",
+                text = "جميع أصوات الأذان الأربعة مدمجة بالكامل داخل التطبيق وتعمل مباشرة في كل وقت بدون الحاجة للإنترنت.",
                 color = TextColorSecondary,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -1787,9 +1760,9 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        muadhins.forEach { m ->
-            val (key, label, desc) = m
-            val isSelected = selectedMuadhin == key
+        AdhanManager.MUADHIN_VOICES.forEach { voice ->
+            val isSelected = selectedMuadhin == voice.name
+            val isPlayingThis = previewingName == voice.name
 
             Box(
                 modifier = Modifier
@@ -1803,10 +1776,11 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
                         RoundedCornerShape(14.dp)
                     )
                     .clickable {
-                        selectedMuadhin = key
-                        sharedPrefs.edit().putString("selected_muadhin_key", key).apply()
+                        selectedMuadhin = voice.name
+                        AdhanManager.setMuadhinForAllPrayers(context, voice.name)
+                        AdhanManager.scheduleNextAlarm(context)
                         viewModel.triggerHaptic()
-                        Toast.makeText(context, "تم تعيين المؤذن المختار كافتراضي بنجاح! 🕌", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "تم تعيين أذان ${voice.name} لجميع الصلوات بنجاح! 🕌", Toast.LENGTH_SHORT).show()
                     }
                     .padding(14.dp)
             ) {
@@ -1815,27 +1789,17 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Left Test Play Button
                     IconButton(
-                        onClick = {
-                            // High performance URLs of lovely tiny Adhans
-                            val demoUrl = when(key) {
-                                "haram_mecca" -> "https://www.islamcan.com/audio/adhan/azan1.mp3"
-                                "haram_medina" -> "https://www.islamcan.com/audio/adhan/azan3.mp3"
-                                "alaqsa" -> "https://www.islamcan.com/audio/adhan/azan12.mp3"
-                                else -> "https://www.islamcan.com/audio/adhan/azan15.mp3"
-                            }
-                            handlePlayDemo(demoUrl)
-                        },
+                        onClick = { handlePlayDemo(voice) },
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .background(if (isSelected && isTestingSound) MutedRed.copy(alpha = 0.2f) else EmeraldSecondary.copy(alpha = 0.2f))
+                            .background(if (isPlayingThis) MutedRed.copy(alpha = 0.2f) else EmeraldSecondary.copy(alpha = 0.2f))
                     ) {
                         Icon(
-                            imageVector = if (isSelected && isTestingSound) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
-                            contentDescription = "استماع للتجربة",
-                            tint = if (isSelected && isTestingSound) MutedRed else GoldAccent
+                            imageVector = if (isPlayingThis) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                            contentDescription = "استماع لصوت ${voice.name}",
+                            tint = if (isPlayingThis) MutedRed else GoldAccent
                         )
                     }
 
@@ -1850,10 +1814,23 @@ fun AdhanVoicesFeature(viewModel: EmaniatViewModel) {
                                 Icon(Icons.Default.CheckCircle, contentDescription = null, tint = EmeraldSecondary, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
-                            Text(text = label, color = if (isSelected) GoldAccent else LightWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Right)
+                            Text(
+                                text = voice.name,
+                                color = if (isSelected) GoldAccent else LightWhite,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Right
+                            )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
-                        Text(text = desc, color = TextColorSecondary, fontSize = 11.sp, lineHeight = 16.sp, textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth())
+                        Text(
+                            text = voice.subtitle,
+                            color = TextColorSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }

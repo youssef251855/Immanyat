@@ -15,29 +15,38 @@ import com.example.AdhanAlarmActivity
 import com.example.R
 import com.example.MainActivity
 import com.example.data.AdhanManager
-import com.example.data.NetworkUtils
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
-import java.io.File
 
 class AdhanPlayerService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
-    private var iqamahPlayer: MediaPlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var vibrator: Vibrator? = null
     private var progressiveVolumeJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var audioFocusRequest: AudioFocusRequest? = null
 
+    enum class AlarmAudioMode {
+        IDLE,
+        ADHAN,
+        POST_ADHAN_DUA,
+        IQAMAH,
+        EVENING_AZKAR
+    }
+
     companion object {
+        val activeMode = MutableStateFlow(AlarmAudioMode.IDLE)
         val isAthanPlaying = MutableStateFlow(false)
+        val isDuaPlaying = MutableStateFlow(false)
         val isIqamahPlaying = MutableStateFlow(false)
+        val isEveningAzkarPlaying = MutableStateFlow(false)
         val currentAthanPrayer = MutableStateFlow("")
         val currentAthanArabic = MutableStateFlow("")
 
-        fun startAthan(context: Context, prayerName: String, prayerArabic: String) {
+        fun startTrigger(context: Context, triggerMode: String, prayerName: String, prayerArabic: String) {
             val intent = Intent(context, AdhanPlayerService::class.java).apply {
+                putExtra("TRIGGER_MODE", triggerMode)
                 putExtra("PRAYER_NAME", prayerName)
                 putExtra("PRAYER_ARABIC", prayerArabic)
             }
@@ -48,10 +57,22 @@ class AdhanPlayerService : Service() {
                     context.startService(intent)
                 }
             } catch (e: Exception) {
-                Log.e("AdhanPlayerService", "Failed to startForegroundService", e)
+                Log.e("AdhanPlayerService", "Failed to startForegroundService for $triggerMode", e)
             }
         }
-        
+
+        fun startAthan(context: Context, prayerName: String, prayerArabic: String) {
+            startTrigger(context, "ADHAN", prayerName, prayerArabic)
+        }
+
+        fun startIqamah(context: Context, prayerName: String, prayerArabic: String) {
+            startTrigger(context, "IQAMAH", prayerName, prayerArabic)
+        }
+
+        fun startEveningAzkar(context: Context) {
+            startTrigger(context, "EVENING_AZKAR", "Maghrib", "أذكار المساء")
+        }
+
         fun stopAthan(context: Context) {
             val intent = Intent(context, AdhanPlayerService::class.java).apply {
                 action = "com.example.ACTION_STOP_ATHAN"
@@ -67,13 +88,12 @@ class AdhanPlayerService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("AdhanPlayerService", "Service onCreate")
-        
-        // Grab WakeLock to ensure smooth background playback
+
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Emaniat:AdhanWakeLock").apply {
                 setReferenceCounted(false)
-                acquire(10 * 60 * 1000L) // 10 minutes max lock
+                acquire(15 * 60 * 1000L) // Up to 15 minutes for Evening Azkar recitation
             }
         } catch (e: Exception) {
             Log.e("AdhanPlayerService", "Error acquiring WakeLock", e)
@@ -92,24 +112,38 @@ class AdhanPlayerService : Service() {
             return START_NOT_STICKY
         }
 
+        val triggerModeStr = intent?.getStringExtra("TRIGGER_MODE") ?: "ADHAN"
+        val mode = when (triggerModeStr) {
+            "IQAMAH" -> AlarmAudioMode.IQAMAH
+            "EVENING_AZKAR" -> AlarmAudioMode.EVENING_AZKAR
+            "POST_ADHAN_DUA" -> AlarmAudioMode.POST_ADHAN_DUA
+            else -> AlarmAudioMode.ADHAN
+        }
         val prayerName = intent?.getStringExtra("PRAYER_NAME") ?: "Fajr"
-        val prayerArabic = intent?.getStringExtra("PRAYER_ARABIC") ?: "الفجر"
+        val prayerArabic = intent?.getStringExtra("PRAYER_ARABIC")
+            ?: if (mode == AlarmAudioMode.EVENING_AZKAR) "أذكار المساء" else "الفجر"
 
         currentAthanPrayer.value = prayerName
         currentAthanArabic.value = prayerArabic
-        isAthanPlaying.value = true
-        isIqamahPlaying.value = false
+        updatePlayingFlags(mode)
 
-        Log.d("AdhanPlayerService", "Starting Athan playback for $prayerName ($prayerArabic)")
+        Log.d("AdhanPlayerService", "Starting $mode playback for $prayerName ($prayerArabic)")
 
-        startForegroundNotification(prayerArabic)
+        startForegroundNotification(mode, prayerArabic)
         launchAlarmScreen(prayerArabic)
-        requestAudioFocusAndPlay(prayerName)
+        requestAudioFocusAndPlay(mode, prayerName, prayerArabic)
 
-        // Receiver wake lock can be released now that service is active
         AdhanWakeLockHolder.release()
 
         return START_NOT_STICKY
+    }
+
+    private fun updatePlayingFlags(mode: AlarmAudioMode) {
+        activeMode.value = mode
+        isAthanPlaying.value = mode == AlarmAudioMode.ADHAN
+        isDuaPlaying.value = mode == AlarmAudioMode.POST_ADHAN_DUA
+        isIqamahPlaying.value = mode == AlarmAudioMode.IQAMAH
+        isEveningAzkarPlaying.value = mode == AlarmAudioMode.EVENING_AZKAR
     }
 
     private fun launchAlarmScreen(prayerArabic: String) {
@@ -126,7 +160,7 @@ class AdhanPlayerService : Service() {
         }
     }
 
-    private fun startForegroundNotification(prayerArabic: String) {
+    private fun startForegroundNotification(mode: AlarmAudioMode, prayerArabic: String) {
         val channelId = "emaniat_athan_alarm_chan_v2"
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -136,7 +170,7 @@ class AdhanPlayerService : Service() {
                 "الأذان ومواقيت الصلاة",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "تنبيهات صوت وشاشة الأذان عند دخول أوقات الصلاة"
+                description = "تنبيهات صوت وشاشة الأذان والإقامة وأذكار المساء"
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setSound(null, null)
                 enableVibration(true)
@@ -158,7 +192,6 @@ class AdhanPlayerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Stop Action Intent
         val stopIntent = Intent(this, AdhanPlayerService::class.java).apply {
             action = "com.example.ACTION_STOP_ATHAN"
         }
@@ -169,15 +202,43 @@ class AdhanPlayerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val (title, text, stopLabel) = when (mode) {
+            AlarmAudioMode.ADHAN -> Triple(
+                "حان الآن موعد صلاة $prayerArabic 🕌",
+                "صوت الحق يرتفع الآن - اضغط لفتح شاشة الأذان والدعاء",
+                "إيقاف الأذان 🔇"
+            )
+            AlarmAudioMode.POST_ADHAN_DUA -> Triple(
+                "دعاء ما بعد أذان $prayerArabic 🤲",
+                "اللهم رب هذه الدعوة التامة والصلاة القائمة...",
+                "إيقاف الدعاء 🔇"
+            )
+            AlarmAudioMode.IQAMAH -> Triple(
+                "حان الآن موعد إقامة صلاة $prayerArabic 📣",
+                "قد قامت الصلاة - أقم صلاتك بخشوع",
+                "إيقاف الإقامة 🔇"
+            )
+            AlarmAudioMode.EVENING_AZKAR -> Triple(
+                "أذكار المساء المباركة 🌅",
+                "باقي ٣٠ دقيقة على أذان المغرب - استمع لأذكار المساء",
+                "إيقاف الأذكار 🔇"
+            )
+            AlarmAudioMode.IDLE -> Triple(
+                "تنبيه إيمانيات 🕌",
+                "اضغط للفتح",
+                "إيقاف 🔇"
+            )
+        }
+
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle("حان الآن موعد صلاة $prayerArabic 🕌")
-            .setContentText("صوت الحق يرتفع الآن - اضغط لفتح شاشة الأذان والدعاء")
+            .setContentTitle(title)
+            .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setOngoing(true)
             .setContentIntent(pIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "إيقاف الأذان 🔇", pStopIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, stopLabel, pStopIntent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -190,10 +251,9 @@ class AdhanPlayerService : Service() {
         }
     }
 
-    private fun requestAudioFocusAndPlay(prayerName: String) {
+    private fun requestAudioFocusAndPlay(mode: AlarmAudioMode, prayerName: String, prayerArabic: String) {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        
-        // Ensure alarm stream volume is clearly audible
+
         val currentAlarmVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
         val maxAlarmVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         val minAudible = (maxAlarmVol * 0.65).toInt().coerceAtLeast(1)
@@ -205,7 +265,6 @@ class AdhanPlayerService : Service() {
             }
         }
 
-        // Setup audio focus attributes
         val playbackAttrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -219,11 +278,11 @@ class AdhanPlayerService : Service() {
                     if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                         try {
                             mediaPlayer?.setVolume(0.1f, 0.1f)
-                        } catch (t: Throwable) {}
+                        } catch (_: Throwable) {}
                     }
                 }
                 .build()
-            
+
             audioFocusRequest?.let { audioManager.requestAudioFocus(it) }
         } else {
             @Suppress("DEPRECATION")
@@ -234,93 +293,50 @@ class AdhanPlayerService : Service() {
             )
         }
 
-        // Start Audio Play
-        playAthanAudio(prayerName)
+        when (mode) {
+            AlarmAudioMode.ADHAN -> playAthanAudio(prayerName, prayerArabic)
+            AlarmAudioMode.POST_ADHAN_DUA -> playPostAdhanDuaAudio(prayerArabic)
+            AlarmAudioMode.IQAMAH -> playIqamahAudio()
+            AlarmAudioMode.EVENING_AZKAR -> playEveningAzkarAudio()
+            AlarmAudioMode.IDLE -> stopSelf()
+        }
     }
 
-    private fun playAthanAudio(prayerName: String) {
+    private fun buildAlarmAttrs(): AudioAttributes {
+        return AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+    }
+
+    private fun playAthanAudio(prayerName: String, prayerArabic: String) {
         val muadhin = AdhanManager.getMuadhinForPrayer(this, prayerName)
-        val file = AdhanManager.getLocalAthanFile(this, muadhin)
-        val useLocal = AdhanManager.isAthanDownloaded(this, muadhin)
-        val streamUrl = AdhanManager.getMuadhinStreamUrl(muadhin)
+        val assetPath = AdhanManager.getMuadhinAssetPath(muadhin)
 
         serviceScope.launch(Dispatchers.Main) {
             try {
+                progressiveVolumeJob?.cancel()
                 mediaPlayer?.release()
                 mediaPlayer = null
 
-                val attrs = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-
+                val attrs = buildAlarmAttrs()
                 var activePlayer: MediaPlayer? = null
 
-                // Tier 1: Downloaded offline MP3 of chosen Muezzin
-                if (useLocal && file.exists() && file.length() > 50 * 1024) {
-                    try {
-                        val localPlayer = MediaPlayer().apply {
-                            setAudioAttributes(attrs)
-                            setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                            setDataSource(file.absolutePath)
-                            prepare()
+                try {
+                    val assetPlayer = MediaPlayer().apply {
+                        setAudioAttributes(attrs)
+                        setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                        assets.openFd(assetPath).use { afd ->
+                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
                         }
-                        activePlayer = localPlayer
-                        Log.d("AdhanPlayerService", "Loaded downloaded offline adhan: ${file.absolutePath}")
-                    } catch (e: Exception) {
-                        Log.w("AdhanPlayerService", "Local adhan file failed, will try online/bundled", e)
+                        prepare()
                     }
+                    activePlayer = assetPlayer
+                    Log.d("AdhanPlayerService", "Loaded bundled offline adhan for $muadhin: $assetPath")
+                } catch (e: Exception) {
+                    Log.w("AdhanPlayerService", "Bundled asset $assetPath failed, falling back to R.raw.adhan", e)
                 }
 
-                // Tier 2: Online streaming of chosen Muezzin (async off main thread with timeout)
-                if (activePlayer == null && !streamUrl.isNullOrBlank() && NetworkUtils.isNetworkAvailable(this@AdhanPlayerService)) {
-                    val preparedOnlinePlayer = withContext(Dispatchers.IO) {
-                        withTimeoutOrNull(7000L) {
-                            suspendCancellableCoroutine<MediaPlayer?> { cont ->
-                                val remotePlayer = MediaPlayer()
-                                var settled = false
-                                fun finish(result: MediaPlayer?) {
-                                    if (!settled) {
-                                        settled = true
-                                        if (cont.isActive) {
-                                            cont.resumeWith(Result.success(result))
-                                        } else {
-                                            try { remotePlayer.release() } catch (_: Throwable) {}
-                                        }
-                                    }
-                                }
-
-                                cont.invokeOnCancellation {
-                                    try { remotePlayer.release() } catch (_: Throwable) {}
-                                }
-
-                                try {
-                                    remotePlayer.setAudioAttributes(attrs)
-                                    remotePlayer.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                                    remotePlayer.setOnPreparedListener { mp -> finish(mp) }
-                                    remotePlayer.setOnErrorListener { mp, what, extra ->
-                                        Log.w("AdhanPlayerService", "Online adhan stream error what=$what extra=$extra")
-                                        try { mp.release() } catch (_: Throwable) {}
-                                        finish(null)
-                                        true
-                                    }
-                                    remotePlayer.setDataSource(streamUrl)
-                                    remotePlayer.prepareAsync()
-                                } catch (e: Exception) {
-                                    Log.w("AdhanPlayerService", "Failed initializing online adhan stream: $streamUrl", e)
-                                    try { remotePlayer.release() } catch (_: Throwable) {}
-                                    finish(null)
-                                }
-                            }
-                        }
-                    }
-                    if (preparedOnlinePlayer != null) {
-                        activePlayer = preparedOnlinePlayer
-                        Log.d("AdhanPlayerService", "Successfully prepared online adhan stream for $muadhin")
-                    }
-                }
-
-                // Tier 3: Bundled high-quality offline fallback R.raw.adhan
                 val player = activePlayer ?: MediaPlayer().apply {
                     setAudioAttributes(attrs)
                     setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
@@ -342,48 +358,52 @@ class AdhanPlayerService : Service() {
 
                 player.setOnCompletionListener {
                     Log.d("AdhanPlayerService", "Athan audio play completed")
-                    playIqamahAudio()
+                    if (AdhanManager.isPostAdhanDuaEnabled(this@AdhanPlayerService)) {
+                        playPostAdhanDuaAudio(prayerArabic)
+                    } else {
+                        stopPlayback()
+                        stopSelf()
+                    }
                 }
 
                 player.setOnErrorListener { _, what, extra ->
                     Log.e("AdhanPlayerService", "MediaPlayer error: what=$what, extra=$extra")
-                    fallbackToBundledAdhan()
+                    fallbackToBundledAdhan(prayerArabic)
                     true
                 }
 
                 player.start()
                 mediaPlayer = player
                 startVibrationIfConfigured()
-
             } catch (e: Exception) {
                 Log.e("AdhanPlayerService", "Error setting up MediaPlayer, trying emergency fallback", e)
-                fallbackToBundledAdhan()
+                fallbackToBundledAdhan(prayerArabic)
             }
         }
     }
 
-    private fun fallbackToBundledAdhan() {
+    private fun fallbackToBundledAdhan(prayerArabic: String) {
         try {
             mediaPlayer?.release()
             mediaPlayer = null
 
             val fallback = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
+                setAudioAttributes(buildAlarmAttrs())
                 setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
                 resources.openRawResourceFd(R.raw.adhan).use { afd ->
                     setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
                     prepare()
                 }
                 setVolume(1.0f, 1.0f)
-                start()
                 setOnCompletionListener {
-                    playIqamahAudio()
+                    if (AdhanManager.isPostAdhanDuaEnabled(this@AdhanPlayerService)) {
+                        playPostAdhanDuaAudio(prayerArabic)
+                    } else {
+                        stopPlayback()
+                        stopSelf()
+                    }
                 }
+                start()
             }
             mediaPlayer = fallback
         } catch (t: Throwable) {
@@ -402,56 +422,150 @@ class AdhanPlayerService : Service() {
                         setDataSource(this@AdhanPlayerService, alarmUri)
                         prepare()
                         setVolume(1.0f, 1.0f)
+                        setOnCompletionListener {
+                            stopPlayback()
+                            stopSelf()
+                        }
                         start()
                     }
                     mediaPlayer = sysPlayer
                 } else {
+                    stopPlayback()
                     stopSelf()
                 }
             } catch (e2: Throwable) {
                 Log.e("AdhanPlayerService", "Fatal error in system ringtone fallback", e2)
+                stopPlayback()
+                stopSelf()
+            }
+        }
+    }
+
+    private fun playPostAdhanDuaAudio(prayerArabic: String) {
+        Log.d("AdhanPlayerService", "Transitioning to Post-Adhan Dua audio playback")
+        updatePlayingFlags(AlarmAudioMode.POST_ADHAN_DUA)
+        startForegroundNotification(AlarmAudioMode.POST_ADHAN_DUA, prayerArabic)
+
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                progressiveVolumeJob?.cancel()
+                mediaPlayer?.release()
+                mediaPlayer = null
+
+                val player = MediaPlayer().apply {
+                    setAudioAttributes(buildAlarmAttrs())
+                    setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                    assets.openFd(AdhanManager.ASSET_POST_ADHAN_DUA_AUDIO).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        prepare()
+                    }
+                    val targetVolume = AdhanManager.getAthanVolume(this@AdhanPlayerService).coerceIn(0.35f, 1.0f)
+                    setVolume(targetVolume, targetVolume)
+                    setOnCompletionListener {
+                        Log.d("AdhanPlayerService", "Post-Adhan Dua playback completed successfully")
+                        stopPlayback()
+                        stopSelf()
+                    }
+                    setOnErrorListener { _, _, _ ->
+                        stopPlayback()
+                        stopSelf()
+                        true
+                    }
+                    start()
+                }
+                mediaPlayer = player
+            } catch (e: Exception) {
+                Log.e("AdhanPlayerService", "Failed to setup Post-Adhan Dua audio", e)
+                stopPlayback()
                 stopSelf()
             }
         }
     }
 
     private fun playIqamahAudio() {
-        Log.d("AdhanPlayerService", "Transitioning to Iqamah audio playback")
-        isIqamahPlaying.value = true
-        isAthanPlaying.value = false
-        
+        Log.d("AdhanPlayerService", "Starting Iqamah audio playback")
+        updatePlayingFlags(AlarmAudioMode.IQAMAH)
+
         serviceScope.launch(Dispatchers.Main) {
             try {
+                progressiveVolumeJob?.cancel()
                 mediaPlayer?.release()
                 mediaPlayer = null
 
                 val player = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
-                    )
+                    setAudioAttributes(buildAlarmAttrs())
                     setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                    resources.openRawResourceFd(R.raw.iqamah).use { afd ->
-                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                        prepare()
+                    try {
+                        assets.openFd(AdhanManager.ASSET_IQAMAH_AUDIO).use { afd ->
+                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        }
+                    } catch (e: Exception) {
+                        Log.w("AdhanPlayerService", "Bundled iqamah asset failed, falling back to R.raw.iqamah", e)
+                        resources.openRawResourceFd(R.raw.iqamah).use { afd ->
+                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        }
                     }
-                    val targetVolume = AdhanManager.getAthanVolume(this@AdhanPlayerService).coerceIn(0.2f, 1.0f)
+                    prepare()
+                    val targetVolume = AdhanManager.getAthanVolume(this@AdhanPlayerService).coerceIn(0.35f, 1.0f)
                     setVolume(targetVolume, targetVolume)
-                    start()
                     setOnCompletionListener {
                         Log.d("AdhanPlayerService", "Iqamah playback completed successfully")
+                        stopPlayback()
                         stopSelf()
                     }
                     setOnErrorListener { _, _, _ ->
+                        stopPlayback()
                         stopSelf()
                         true
                     }
+                    start()
                 }
-                iqamahPlayer = player
+                mediaPlayer = player
+                startVibrationIfConfigured()
             } catch (e: Exception) {
                 Log.e("AdhanPlayerService", "Failed to setup Iqamah audio", e)
+                stopPlayback()
+                stopSelf()
+            }
+        }
+    }
+
+    private fun playEveningAzkarAudio() {
+        Log.d("AdhanPlayerService", "Starting Evening Azkar audio playback")
+        updatePlayingFlags(AlarmAudioMode.EVENING_AZKAR)
+
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                progressiveVolumeJob?.cancel()
+                mediaPlayer?.release()
+                mediaPlayer = null
+
+                val player = MediaPlayer().apply {
+                    setAudioAttributes(buildAlarmAttrs())
+                    setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                    assets.openFd(AdhanManager.ASSET_EVENING_AZKAR_AUDIO).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                        prepare()
+                    }
+                    val targetVolume = AdhanManager.getAthanVolume(this@AdhanPlayerService).coerceIn(0.35f, 1.0f)
+                    setVolume(targetVolume, targetVolume)
+                    setOnCompletionListener {
+                        Log.d("AdhanPlayerService", "Evening Azkar playback completed successfully")
+                        stopPlayback()
+                        stopSelf()
+                    }
+                    setOnErrorListener { _, _, _ ->
+                        stopPlayback()
+                        stopSelf()
+                        true
+                    }
+                    start()
+                }
+                mediaPlayer = player
+                startVibrationIfConfigured()
+            } catch (e: Exception) {
+                Log.e("AdhanPlayerService", "Failed to setup Evening Azkar audio", e)
+                stopPlayback()
                 stopSelf()
             }
         }
@@ -466,7 +580,7 @@ class AdhanPlayerService : Service() {
                 vol = (vol + 0.15f).coerceAtMost(maxVolume)
                 try {
                     mediaPlayer?.setVolume(vol, vol)
-                } catch (t: Throwable) {}
+                } catch (_: Throwable) {}
             }
         }
     }
@@ -477,7 +591,6 @@ class AdhanPlayerService : Service() {
         try {
             vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             if (vibrator != null && vibrator?.hasVibrator() == true) {
-                // Waveform: wait 0ms, vibrate 1000ms, sleep 1000ms (repeat 3 times)
                 val pattern = longArrayOf(0, 1000, 1000, 1000, 1000, 1000)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     vibrator?.vibrate(VibrationEffect.createWaveform(pattern, -1))
@@ -498,24 +611,15 @@ class AdhanPlayerService : Service() {
                 if (it.isPlaying) it.stop()
                 it.release()
             }
-        } catch (t: Throwable) {}
+        } catch (_: Throwable) {}
         mediaPlayer = null
 
         try {
-            iqamahPlayer?.let {
-                if (it.isPlaying) it.stop()
-                it.release()
-            }
-        } catch (t: Throwable) {}
-        iqamahPlayer = null
-
-        try {
             vibrator?.cancel()
-        } catch (t: Throwable) {}
+        } catch (_: Throwable) {}
         vibrator = null
 
-        isAthanPlaying.value = false
-        isIqamahPlaying.value = false
+        updatePlayingFlags(AlarmAudioMode.IDLE)
     }
 
     override fun onDestroy() {

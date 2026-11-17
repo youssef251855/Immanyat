@@ -148,17 +148,25 @@ class PreLaunchAuditTest {
     }
 
     @Test
-    fun adhanManager_provides_muezzin_urls_and_applies_to_all_prayers() {
+    fun adhanManager_bundles_4_offline_muadhin_assets_and_applies_to_all_prayers() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertTrue(AdhanManager.MUADHIN_VOICES.size >= 5)
-        AdhanManager.MUADHIN_URLS.values.forEach { url ->
-            assertTrue("Adhan stream URL must use HTTPS: $url", url.startsWith("https://"))
+        assertEquals(4, AdhanManager.MUADHIN_VOICES.size)
+
+        AdhanManager.MUADHIN_VOICES.forEach { voice ->
+            assertFalse("Voice path must be local asset, not URL: ${voice.assetPath}", voice.assetPath.startsWith("http"))
+            context.assets.openFd(voice.assetPath).use { afd ->
+                assertTrue("Bundled Adhan MP3 ${voice.assetPath} must be > 100KB", afd.length > 100 * 1024L)
+            }
+            assertTrue("isMuadhinAssetAvailable should return true for ${voice.name}", AdhanManager.isMuadhinAssetAvailable(context, voice.name))
         }
 
         AdhanManager.setMuadhinForAllPrayers(context, "مؤذن مكة")
         assertEquals(5, AdhanManager.getPrayersUsingMuadhinCount(context, "مؤذن مكة"))
         assertEquals("مؤذن مكة", AdhanManager.getMuadhinForPrayer(context, "Fajr"))
         assertEquals("مؤذن مكة", AdhanManager.getMuadhinForPrayer(context, "Isha"))
+
+        // Legacy names normalize cleanly onto bundled voices
+        assertEquals("مؤذن مكة", AdhanManager.normalizeMuadhinName("أذان المسجد الأقصى"))
     }
 
     @Test
@@ -166,5 +174,45 @@ class PreLaunchAuditTest {
         val root = java.net.UnknownHostException("Unable to resolve host: no network")
         val wrapped = RuntimeException("ExoPlayerImplInternal: Playback error", root)
         assertTrue(com.example.data.NetworkUtils.isNetworkOrHostError(wrapped))
+    }
+
+    @Test
+    fun iqamah_postAdhanDua_and_eveningAzkar_assets_and_schedules_are_accurate() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        AdhanManager.saveCoordinates(context, 30.0444, 31.2357, "القاهرة")
+
+        // Verify all 3 additional bundled audio files are packaged & non-empty
+        listOf(
+            AdhanManager.ASSET_IQAMAH_AUDIO,
+            AdhanManager.ASSET_POST_ADHAN_DUA_AUDIO,
+            AdhanManager.ASSET_EVENING_AZKAR_AUDIO
+        ).forEach { assetPath ->
+            context.assets.openFd(assetPath).use { afd ->
+                assertTrue("Bundled audio $assetPath must be > 100KB", afd.length > 100 * 1024L)
+            }
+            assertTrue("isAssetAvailable should be true for $assetPath", AdhanManager.isAssetAvailable(context, assetPath))
+        }
+
+        // Verify exact requested Iqamah delays
+        assertEquals(15, AdhanManager.getIqamahDelayMinutes(context, "Fajr"))
+        assertEquals(15, AdhanManager.getIqamahDelayMinutes(context, "Dhuhr"))
+        assertEquals(15, AdhanManager.getIqamahDelayMinutes(context, "Asr"))
+        assertEquals(12, AdhanManager.getIqamahDelayMinutes(context, "Maghrib"))
+        assertEquals(15, AdhanManager.getIqamahDelayMinutes(context, "Isha"))
+
+        // Verify next Evening Azkar timestamp is strictly 30 minutes before Maghrib
+        val nextAzkar = AdhanManager.getNextEveningAzkarTime(context, bufferSeconds = 0L)
+        assertTrue("Next Evening Azkar time must be scheduled", nextAzkar != null)
+
+        val todayMaghrib = AdhanManager.calculatePrayerTimesForDate(context, Date()).first { it.name == "Maghrib" }
+        val cal = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, 1) }
+        val tomorrowMaghrib = AdhanManager.calculatePrayerTimesForDate(context, cal.time).first { it.name == "Maghrib" }
+        val expectedToday = todayMaghrib.timeMillis - 30 * 60_000L
+        val expectedTomorrow = tomorrowMaghrib.timeMillis - 30 * 60_000L
+        val actual = nextAzkar!!.first
+        assertTrue(
+            "Evening Azkar ($actual) must be 30 mins before today's ($expectedToday) or tomorrow's ($expectedTomorrow) Maghrib",
+            actual == expectedToday || actual == expectedTomorrow
+        )
     }
 }

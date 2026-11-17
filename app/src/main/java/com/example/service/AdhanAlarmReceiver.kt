@@ -66,8 +66,11 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             } catch (_: Throwable) {
             }
             fallbackPlayer = null
+            AdhanPlayerService.activeMode.value = AdhanPlayerService.AlarmAudioMode.IDLE
             AdhanPlayerService.isAthanPlaying.value = false
+            AdhanPlayerService.isDuaPlaying.value = false
             AdhanPlayerService.isIqamahPlaying.value = false
+            AdhanPlayerService.isEveningAzkarPlaying.value = false
             AdhanWakeLockHolder.release()
         }
     }
@@ -81,60 +84,64 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             action == Intent.ACTION_TIME_CHANGED ||
             action == Intent.ACTION_TIMEZONE_CHANGED) {
 
-            // Reschedule upcoming alarm cleanly
             AdhanManager.scheduleNextAlarm(context)
             return
         }
 
         if (action == "com.example.ACTION_TRIGGER_ATHAN") {
-            // Keep CPU awake while starting service or playing sound
             AdhanWakeLockHolder.acquire(context)
 
+            val triggerMode = intent.getStringExtra("TRIGGER_MODE") ?: "ADHAN"
             val prayerName = intent.getStringExtra("PRAYER_NAME") ?: "Fajr"
-            val prayerArabic = intent.getStringExtra("PRAYER_ARABIC") ?: "الفجر"
+            val prayerArabic = intent.getStringExtra("PRAYER_ARABIC")
+                ?: if (triggerMode == "EVENING_AZKAR") "أذكار المساء" else "الفجر"
             val isPreAlert = intent.getBooleanExtra("IS_PRE_ALERT", false)
             val isTest = intent.getBooleanExtra("IS_TEST", false)
 
             if (isPreAlert) {
-                // Raise Pre-Adhan early notification (e.g. 10 mins before)
                 val preMins = intent.getIntExtra("PRE_ALERT_MINUTES", 10)
                 showPreAdhanNotification(context, prayerArabic, preMins)
                 AdhanWakeLockHolder.release()
             } else {
-                // Check if silent during sleep is set (only if not a test trigger)
-                if (!isTest && AdhanManager.isSilentDuringSleep(context)) {
-                    val cal = Calendar.getInstance()
-                    val hour = cal.get(Calendar.HOUR_OF_DAY)
-                    if (hour >= 23 || hour < 5) { // Quiet hours between 11 PM and 5 AM
-                        Log.d("AdhanAlarmReceiver", "Skipping Adhan sound during sleep hours (11PM-5AM)")
-                        showSilentNotification(context, prayerArabic)
-                        AdhanManager.scheduleNextAlarm(context)
-                        AdhanWakeLockHolder.release()
-                        return
-                    }
+                val cal = Calendar.getInstance()
+                val hour = cal.get(Calendar.HOUR_OF_DAY)
+                val isQuietSleep = !isTest &&
+                    triggerMode != "EVENING_AZKAR" &&
+                    AdhanManager.isSilentDuringSleep(context) &&
+                    (hour >= 23 || hour < 5)
+
+                if (isQuietSleep) {
+                    Log.d("AdhanAlarmReceiver", "Skipping $triggerMode sound during sleep hours (11PM-5AM)")
+                    showSilentNotification(context, prayerArabic)
+                    AdhanManager.scheduleNextAlarm(context)
+                    AdhanWakeLockHolder.release()
+                    return
                 }
 
                 if (!isTest) {
-                    AdhanManager.markPrayerTriggeredToday(context, prayerName)
+                    when (triggerMode) {
+                        "IQAMAH" -> AdhanManager.markIqamahTriggeredToday(context, prayerName)
+                        "EVENING_AZKAR" -> AdhanManager.markEveningAzkarTriggeredToday(context)
+                        else -> AdhanManager.markPrayerTriggeredToday(context, prayerName)
+                    }
                 }
 
-                // Launch Foreground Service to play full sound and open AdhanAlarmActivity
-                startPlayerService(context, prayerName, prayerArabic)
+                startPlayerService(context, triggerMode, prayerName, prayerArabic)
             }
 
-            // Immediately schedule the NEXT prayer alarm to chain executions permanently
             if (!isTest) {
                 AdhanManager.scheduleNextAlarm(context)
             }
         }
     }
 
-    private fun startPlayerService(context: Context, name: String, arabic: String) {
+    private fun startPlayerService(context: Context, triggerMode: String, name: String, arabic: String) {
         val serviceIntent = Intent(context, AdhanPlayerService::class.java).apply {
+            putExtra("TRIGGER_MODE", triggerMode)
             putExtra("PRAYER_NAME", name)
             putExtra("PRAYER_ARABIC", arabic)
         }
-        
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
@@ -143,21 +150,26 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             }
         } catch (e: Exception) {
             Log.e("AdhanAlarmReceiver", "Failed starting player service directly. Attempting direct fallback", e)
-            playDirectFallbackAdhan(context, name, arabic)
+            playDirectFallbackAudio(context, triggerMode, name, arabic)
         }
     }
 
-    private fun playDirectFallbackAdhan(context: Context, name: String, arabic: String) {
-        // Fallback for strict devices that restrict background services:
-        // Play local R.raw.adhan directly and show high-priority Full-Screen Alarm notification + launch activity!
+    private fun playDirectFallbackAudio(context: Context, triggerMode: String, name: String, arabic: String) {
+        val mode = when (triggerMode) {
+            "IQAMAH" -> AdhanPlayerService.AlarmAudioMode.IQAMAH
+            "EVENING_AZKAR" -> AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR
+            else -> AdhanPlayerService.AlarmAudioMode.ADHAN
+        }
         AdhanPlayerService.currentAthanPrayer.value = name
         AdhanPlayerService.currentAthanArabic.value = arabic
-        AdhanPlayerService.isAthanPlaying.value = true
-        AdhanPlayerService.isIqamahPlaying.value = false
 
         try {
             stopFallbackAudio()
-            AdhanPlayerService.isAthanPlaying.value = true
+            AdhanPlayerService.activeMode.value = mode
+            AdhanPlayerService.isAthanPlaying.value = mode == AdhanPlayerService.AlarmAudioMode.ADHAN
+            AdhanPlayerService.isIqamahPlaying.value = mode == AdhanPlayerService.AlarmAudioMode.IQAMAH
+            AdhanPlayerService.isEveningAzkarPlaying.value = mode == AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR
+
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
@@ -168,6 +180,11 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
                 } catch (_: Throwable) {}
             }
 
+            val assetPath = when (mode) {
+                AdhanPlayerService.AlarmAudioMode.IQAMAH -> AdhanManager.ASSET_IQAMAH_AUDIO
+                AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> AdhanManager.ASSET_EVENING_AZKAR_AUDIO
+                else -> AdhanManager.getMuadhinAssetPath(AdhanManager.getMuadhinForPrayer(context, name))
+            }
             val player = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -175,10 +192,17 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
-                context.resources.openRawResourceFd(R.raw.adhan).use { afd ->
-                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                    prepare()
+                try {
+                    context.assets.openFd(assetPath).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    }
+                } catch (_: Throwable) {
+                    val rawFallback = if (mode == AdhanPlayerService.AlarmAudioMode.IQAMAH) R.raw.iqamah else R.raw.adhan
+                    context.resources.openRawResourceFd(rawFallback).use { afd ->
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    }
                 }
+                prepare()
                 val vol = AdhanManager.getAthanVolume(context).coerceIn(0.4f, 1.0f)
                 setVolume(vol, vol)
                 start()
@@ -189,11 +213,9 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             fallbackPlayer = player
         } catch (t: Throwable) {
             Log.e("AdhanAlarmReceiver", "Direct fallback audio failed", t)
-            AdhanPlayerService.isAthanPlaying.value = false
-            AdhanWakeLockHolder.release()
+            stopFallbackAudio()
         }
 
-        // Show Full Screen Alarm Notification
         val channelId = "emaniat_athan_alarm_chan_v2"
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -228,10 +250,16 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val notifTitle = when (mode) {
+            AdhanPlayerService.AlarmAudioMode.IQAMAH -> "حان الآن موعد إقامة صلاة $arabic 📣"
+            AdhanPlayerService.AlarmAudioMode.EVENING_AZKAR -> "أذكار المساء المباركة 🌅"
+            else -> "حان الآن موعد صلاة $arabic 🕌"
+        }
+
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle("حان الآن موعد صلاة $arabic 🕌")
-            .setContentText("صوت الحق يرتفع الآن - اضغط لفتح شاشة الأذان")
+            .setContentTitle(notifTitle)
+            .setContentText("اضغط لفتح الشاشة والتحكم بالصوت")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
