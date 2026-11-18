@@ -17,7 +17,7 @@
 | الحالة والتخزين (State & Storage) | `Stateless` بالكامل في الذاكرة — لا KV ولا R2 ولا D1 ولا تسجيل للملفات الصوتية |
 | ذاكرة الـ Isolate | ضمن حد Cloudflare الافتراضي (`128 MB`) مع سقف طلب أقصى `9 MB` |
 | الصوت المسموح | حتى `8,000,000` حرف Base64 (~6 MB ملف صوتي) بصيغ `mp4/m4a/aac/mpeg/wav/webm/ogg` |
-| مهلة الاتصال بـ Gemini | `25,000 ms` عبر `AbortSignal.timeout` مع تتابع نماذج `2.5-flash` ← `2.5-flash-lite` ← `2.0-flash` |
+| مهلة الاتصال بـ Gemini | `25,000 ms` عبر `AbortSignal.timeout` مع نموذج `gemini-4-hydrogen` واكتشاف تلقائي للنماذج النشطة via `/v1beta/models` |
 | الأمان والترويسات | HTTPS إلزامي، `HSTS`، `X-Frame-Options: DENY`، `Cache-Control: no-store`، `X-App-Token` اختياري |
 | خطة Cloudflare | متوافق 100% مع الخطة المجانية (Free 10ms CPU — خوارزمية LCS الموضعية تعمل بأقل من `1 ms`) والمدفوعة |
 
@@ -58,9 +58,8 @@ BACKEND_BASE_URL=https://emaniat-api.<your-subdomain>.workers.dev
 - **Delete Account URL:** `https://emaniat-api.<your-subdomain>.workers.dev/delete-account`
 
 ## النشر التلقائي عبر GitHub Actions (Workflow)
-يتوفر ملفان جاهزان للنشر التلقائي إلى Cloudflare Workers:
-- داخل المشروع الكامل: `.github/workflows/deploy-cloudflare-worker.yml` (يعمل تلقائياً عند التعديل على `cloudflare-worker/**` أو يدوياً من تبويب Actions).
-- داخل مجلد الباك المستقل: `cloudflare-worker/.github/workflows/deploy-cloudflare.yml` (إذا تم رفع مجلد `cloudflare-worker` كمستودع مستقل على GitHub).
+يتوفر ملف النشر التلقائي إلى Cloudflare Workers داخل مجلد الباك:
+- `cloudflare-worker/.github/workflows/deploy-cloudflare.yml` (عند رفع مجلد `cloudflare-worker` كمستودع مستقل على GitHub).
 
 ### الأسرار المطلوبة في GitHub (`Settings -> Secrets and variables -> Actions`)
 - `CLOUDFLARE_API_TOKEN` — رمز API بصلاحية **Edit Cloudflare Workers**.

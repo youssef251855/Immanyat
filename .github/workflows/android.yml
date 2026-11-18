@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      backend_base_url:
+        description: "رابط خادم Cloudflare Worker (مثل https://emaniat-api.xxx.workers.dev)"
+        required: false
+        type: string
+      backend_client_token:
+        description: "رمز حماية الباك الاختياري (اختياري فقط إذا فعّلت APP_CLIENT_TOKEN في Cloudflare)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -51,9 +60,9 @@ jobs:
       - name: Prepare Environment & Debug Keystore
         id: prep
         env:
-          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
-          BACKEND_CLIENT_TOKEN: ${{ secrets.BACKEND_CLIENT_TOKEN }}
-          STARTIO_APP_ID: ${{ secrets.STARTIO_APP_ID }}
+          RAW_BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || secrets.BACKEND_BASE_URL || vars.BACKEND_BASE_URL }}
+          RAW_BACKEND_CLIENT_TOKEN: ${{ github.event.inputs.backend_client_token || secrets.BACKEND_CLIENT_TOKEN || secrets.APP_CLIENT_TOKEN || vars.BACKEND_CLIENT_TOKEN || vars.APP_CLIENT_TOKEN }}
+          RAW_STARTIO_APP_ID: ${{ secrets.STARTIO_APP_ID || vars.STARTIO_APP_ID }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
@@ -63,17 +72,37 @@ jobs:
           else
             echo "has_signing_key=false" >> "$GITHUB_OUTPUT"
           fi
-          if [ ! -f .env ]; then
-            cp .env.example .env
+
+          # Normalize Backend URL (trim spaces/quotes/trailing slash and ensure https://)
+          CLEAN_URL=$(printf '%s' "$RAW_BACKEND_BASE_URL" | tr -d '\r' | sed -E 's/^[[:space:]"'\'']+//; s/[[:space:]"'\'']+$//; s|/*$||')
+          if [ -n "$CLEAN_URL" ] && ! printf '%s' "$CLEAN_URL" | grep -qiE '^https?://'; then
+            CLEAN_URL="https://$CLEAN_URL"
           fi
-          if [ -n "$BACKEND_BASE_URL" ]; then
-            sed -i "s|^BACKEND_BASE_URL=.*|BACKEND_BASE_URL=$BACKEND_BASE_URL|" .env
+          if [ -n "$CLEAN_URL" ] && printf '%s' "$CLEAN_URL" | grep -qiE '^http://'; then
+            echo "::error::رابط الباك BACKEND_BASE_URL يجب أن يبدأ بـ https:// (تم إدخال: $CLEAN_URL)."
+            exit 1
           fi
-          if [ -n "$BACKEND_CLIENT_TOKEN" ]; then
-            sed -i "s|^BACKEND_CLIENT_TOKEN=.*|BACKEND_CLIENT_TOKEN=$BACKEND_CLIENT_TOKEN|" .env
-          fi
-          if [ -n "$STARTIO_APP_ID" ]; then
-            sed -i "s|^STARTIO_APP_ID=.*|STARTIO_APP_ID=$STARTIO_APP_ID|" .env
+
+          CLEAN_TOKEN=$(printf '%s' "$RAW_BACKEND_CLIENT_TOKEN" | tr -d '\r' | sed -E 's/^[[:space:]"'\'']+//; s/[[:space:]"'\'']+$//')
+          CLEAN_STARTIO=$(printf '%s' "$RAW_STARTIO_APP_ID" | tr -d '\r' | sed -E 's/^[[:space:]"'\'']+//; s/[[:space:]"'\'']+$//')
+
+          FINAL_BACKEND_URL="${CLEAN_URL:-UNCONFIGURED_BACKEND_BASE_URL}"
+          FINAL_CLIENT_TOKEN="${CLEAN_TOKEN:-UNCONFIGURED_BACKEND_CLIENT_TOKEN}"
+          FINAL_STARTIO_ID="${CLEAN_STARTIO:-200676644}"
+
+          {
+            printf 'BACKEND_BASE_URL=%s\n' "$FINAL_BACKEND_URL"
+            printf 'BACKEND_CLIENT_TOKEN=%s\n' "$FINAL_CLIENT_TOKEN"
+            printf 'STARTIO_APP_ID=%s\n' "$FINAL_STARTIO_ID"
+          } > .env
+
+          if [ "$FINAL_BACKEND_URL" = "UNCONFIGURED_BACKEND_BASE_URL" ]; then
+            echo "::warning::BACKEND_BASE_URL غير مضبوط في GitHub Secrets أو Variables؛ سيبنى التطبيق بدون رابط التسميع السحابي."
+            echo "backend_configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Configured BACKEND_BASE_URL in .env for APK/AAB build: $FINAL_BACKEND_URL"
+            echo "backend_configured=true" >> "$GITHUB_OUTPUT"
+            echo "backend_url=$FINAL_BACKEND_URL" >> "$GITHUB_OUTPUT"
           fi
 
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
@@ -159,6 +188,11 @@ jobs:
           DEBUG_APK=$(find app/build/outputs/apk/debug -maxdepth 1 -name "*.apk" | head -n 1)
           echo "### Debug APK Certificate" >> "$GITHUB_STEP_SUMMARY"
           "$APKSIGNER" verify --print-certs "$DEBUG_APK" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          DEBUG_BUILD_CONFIG=$(find app/build/generated/source/buildConfig/debug -name "BuildConfig.java" | head -n 1)
+          if [ -n "$DEBUG_BUILD_CONFIG" ]; then
+            EMBEDDED_URL=$(awk -F'"' '/BACKEND_BASE_URL/{print $2; exit}' "$DEBUG_BUILD_CONFIG")
+            echo "- Debug APK \`BACKEND_BASE_URL\`: \`${EMBEDDED_URL:-unknown}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -332,10 +366,21 @@ jobs:
             exit 1
           fi
 
+          RELEASE_BUILD_CONFIG=$(find app/build/generated/source/buildConfig/release -name "BuildConfig.java" | head -n 1)
+          EMBEDDED_RELEASE_URL="unknown"
+          if [ -n "$RELEASE_BUILD_CONFIG" ]; then
+            EMBEDDED_RELEASE_URL=$(awk -F'"' '/BACKEND_BASE_URL/{print $2; exit}' "$RELEASE_BUILD_CONFIG")
+          fi
+          if [ "${{ steps.prep.outputs.backend_configured }}" = "true" ] && [ "$EMBEDDED_RELEASE_URL" != "${{ steps.prep.outputs.backend_url }}" ]; then
+            echo "::error::فشل تضمين رابط الباك في BuildConfig لنسخة Release (المتوقع: ${{ steps.prep.outputs.backend_url }}، الموجود: $EMBEDDED_RELEASE_URL)."
+            exit 1
+          fi
+
           {
             echo "### Release AAB & APK (Signed with Your Upload Key)"
             echo "- Alias: \`$RESOLVED_ALIAS\`"
             echo "- SHA-256: \`$USER_SHA256\`"
+            echo "- Embedded BACKEND_BASE_URL: \`$EMBEDDED_RELEASE_URL\`"
             echo "- AAB: \`$FINAL_AAB\`"
             echo "- APK: \`$FINAL_APK\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,11 @@
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+const GEMINI_MODELS = [
+  "gemini-4-hydrogen",
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash"
+];
 const MAX_AUDIO_BASE64_LENGTH = 8 * 1024 * 1024; // ~6 MB decoded audio limit
 const MIN_AUDIO_BASE64_LENGTH = 24000;
 const MAX_TEXT_LENGTH = 25000;
@@ -426,9 +432,99 @@ export function analyzeArabicRecitation(expectedText, candidateText, surahName =
   };
 }
 
-// =============================================================================
-// GEMINI CALLER WITH STRUCTURED JSON SCHEMA
-// =============================================================================
+function scoreDiscoveredModel(modelId) {
+  const id = modelId.toLowerCase();
+  if (id.includes("hydrogen")) return 100;
+  if (id.includes("gemini-4") && id.includes("flash")) return 95;
+  if (id.includes("gemini-4")) return 90;
+  if (id.includes("3.8") && id.includes("flash")) return 88;
+  if (id.includes("3.7") && id.includes("flash")) return 86;
+  if (id.includes("3.6") && id.includes("flash")) return 84;
+  if (id.includes("flash-latest")) return 82;
+  if (id.includes("flash") && !id.includes("lite")) return 80;
+  if (id.includes("flash")) return 70;
+  if (id.includes("pro")) return 60;
+  return 50;
+}
+
+async function discoverAvailableGeminiModels(apiKey, alreadyTriedSet, fetcher = fetch) {
+  try {
+    const listUrl = `${GEMINI_BASE_URL}?key=${encodeURIComponent(apiKey)}&pageSize=100`;
+    const fetchOptions = { method: "GET" };
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      fetchOptions.signal = AbortSignal.timeout(10000);
+    }
+    const res = await fetcher(listUrl, fetchOptions);
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const models = Array.isArray(data?.models) ? data.models : [];
+    return models
+      .filter((m) => {
+        const methods = Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
+        if (!methods.includes("generateContent")) return false;
+        const rawName = String(m?.name || "").replace(/^models\//, "").trim();
+        const lower = rawName.toLowerCase();
+        if (!lower.startsWith("gemini-")) return false;
+        if (alreadyTriedSet.has(rawName)) return false;
+        return !/(embedding|imagen|veo|tts|aqa|robotics|computer-use|image-generation|-image|-live|native-audio-dialog)/i.test(lower);
+      })
+      .map((m) => String(m.name).replace(/^models\//, "").trim())
+      .sort((a, b) => scoreDiscoveredModel(b) - scoreDiscoveredModel(a))
+      .slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
+async function tryGenerateWithModel(apiKey, model, contents, fetcher, useSchema) {
+  const endpoint = `${GEMINI_BASE_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const bodyPayload = {
+    contents,
+    generationConfig: useSchema
+      ? {
+          temperature: 0.0,
+          topP: 0.1,
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA
+        }
+      : {
+          temperature: 0.0,
+          topP: 0.1,
+          responseMimeType: "application/json"
+        }
+  };
+
+  const fetchOptions = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bodyPayload)
+  };
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    fetchOptions.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  }
+
+  const res = await fetcher(endpoint, fetchOptions);
+  if (res.ok) {
+    const json = await res.json();
+    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text && typeof text === "string") {
+      return { ok: true, text };
+    }
+    return { ok: false, status: 502, errorText: "Empty Gemini candidate response" };
+  }
+
+  const errorText = await res.text();
+  if (res.status === 401 || res.status === 403) {
+    throw new HttpError(502, "مفتاح الذكاء الاصطناعي على الخادم غير مخوّل حالياً.");
+  }
+
+  if (res.status === 400 && useSchema) {
+    return await tryGenerateWithModel(apiKey, model, contents, fetcher, false);
+  }
+
+  return { ok: false, status: res.status, errorText };
+}
 
 async function callGeminiWithFallback(env, contents, fetcher = fetch, useSchema = true) {
   const apiKey = (env?.GEMINI_API_KEY || "").trim();
@@ -438,55 +534,30 @@ async function callGeminiWithFallback(env, contents, fetcher = fetch, useSchema 
 
   let lastStatus = 502;
   let lastErrorText = "";
+  const tried = new Set();
 
   for (const model of GEMINI_MODELS) {
-    const endpoint = `${GEMINI_BASE_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const bodyPayload = {
-      contents,
-      generationConfig: useSchema
-        ? {
-            temperature: 0.0,
-            topP: 0.1,
-            responseMimeType: "application/json",
-            responseSchema: RESPONSE_SCHEMA
-          }
-        : {
-            temperature: 0.0,
-            topP: 0.1,
-            responseMimeType: "application/json"
-          }
-    };
-
+    tried.add(model);
     try {
-      const fetchOptions = {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload)
-      };
-      if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-        fetchOptions.signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
-      }
+      const attempt = await tryGenerateWithModel(apiKey, model, contents, fetcher, useSchema);
+      if (attempt.ok) return attempt.text;
+      lastStatus = attempt.status;
+      lastErrorText = attempt.errorText;
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      lastErrorText = err?.message || "Upstream network error";
+    }
+  }
 
-      const res = await fetcher(endpoint, fetchOptions);
-      if (res.ok) {
-        const json = await res.json();
-        const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text && typeof text === "string") {
-          return text;
-        }
-        lastErrorText = "Empty Gemini candidate response";
-        continue;
-      }
-
-      lastStatus = res.status;
-      lastErrorText = await res.text();
-      if (res.status === 401 || res.status === 403) {
-        throw new HttpError(502, "مفتاح الذكاء الاصطناعي على الخادم غير مخوّل حالياً.");
-      }
-      // If responseSchema caused a 400 on a fallback model, retry that model without schema
-      if (res.status === 400 && useSchema) {
-        return await callGeminiWithFallback(env, contents, fetcher, false);
-      }
+  // Dynamic model auto-discovery: if static model IDs returned 404/deprecated/unavailable, query v1beta/models
+  const discoveredModels = await discoverAvailableGeminiModels(apiKey, tried, fetcher);
+  for (const model of discoveredModels) {
+    tried.add(model);
+    try {
+      const attempt = await tryGenerateWithModel(apiKey, model, contents, fetcher, useSchema);
+      if (attempt.ok) return attempt.text;
+      lastStatus = attempt.status;
+      lastErrorText = attempt.errorText;
     } catch (err) {
       if (err instanceof HttpError) throw err;
       lastErrorText = err?.message || "Upstream network error";
@@ -495,7 +566,7 @@ async function callGeminiWithFallback(env, contents, fetcher = fetch, useSchema 
 
   throw new HttpError(
     lastStatus >= 400 && lastStatus < 600 ? 502 : 502,
-    `تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتاً (${lastErrorText.slice(0, 120)}).`
+    `تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتاً (${lastErrorText.slice(0, 140)}).`
   );
 }
 
@@ -831,6 +902,8 @@ export async function handleRequest(request, env = {}, fetcher = fetch) {
         runtime: "cloudflare-workers",
         service: "emaniat-recitation-api",
         purpose: "quran-recitation-correction-only",
+        primaryModel: GEMINI_MODELS[0],
+        models: GEMINI_MODELS,
         stateless: true,
         storagePolicy: "stateless-no-audio-retention",
         smartVerification: [

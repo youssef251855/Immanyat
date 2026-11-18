@@ -215,4 +215,18 @@ class PreLaunchAuditTest {
             actual == expectedToday || actual == expectedTomorrow
         )
     }
+
+    @Test
+    fun loadQuranFromAssets_loads_all_114_surahs_cleanly_without_bom() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val quranMap = com.example.ui.screens.loadQuranFromAssets(context)
+        assertEquals(114, quranMap.size)
+
+        val fatiha = com.example.ui.screens.getSurahFullText(1, quranMap, emptyMap())
+        assertFalse("Fatiha reference text must not contain BOM", fatiha.contains("\uFEFF"))
+        assertTrue(fatiha.contains("الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ"))
+
+        val ikhlas = com.example.ui.screens.getSurahFullText(112, quranMap, emptyMap())
+        assertTrue(ikhlas.contains("قُلْ هُوَ اللَّهُ أَحَدٌ"))
+    }
 }

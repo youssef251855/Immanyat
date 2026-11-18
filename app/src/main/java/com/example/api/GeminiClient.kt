@@ -15,8 +15,8 @@ object GeminiApiClient {
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(90, TimeUnit.SECONDS)
         .build()
 
     private fun configuredBaseUrl(): String? {
@@ -148,13 +148,22 @@ object GeminiApiClient {
                 put("mimeType", mimeType)
                 put("audioBase64", audioBase64)
             }
+            android.util.Log.i(
+                "GeminiApiClient",
+                "Sending audio recitation: surah=$surahName, mime=$mimeType, base64Len=${audioBase64.length}, refChars=${correctText.length}"
+            )
             val request = buildPostRequest("$baseUrl/api/gemini/recitation-audio", payload)
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string()
+                android.util.Log.i(
+                    "GeminiApiClient",
+                    "Audio recitation response: http=${response.code}, bodyLen=${body?.length ?: 0}"
+                )
                 if (!response.isSuccessful || body.isNullOrBlank()) {
                     val serverMsg = runCatching {
                         if (!body.isNullOrBlank()) JSONObject(body).optString("error", "") else ""
                     }.getOrDefault("")
+                    android.util.Log.w("GeminiApiClient", "Audio evaluation error (${response.code}): $serverMsg")
                     return@withContext errorEvaluationJson(
                         "تعذر التقييم الصوتي",
                         serverMsg.ifBlank { "تعذر الاتصال بخادم تحليل التلاوة الآمن (HTTP ${response.code})." }
@@ -171,7 +180,7 @@ object GeminiApiClient {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.w("GeminiApiClient", "Audio recitation evaluation failed: ${e.message}")
+            android.util.Log.w("GeminiApiClient", "Audio recitation evaluation failed: ${e.javaClass.simpleName}: ${e.message}")
             errorEvaluationJson(
                 "تعذر الاتصال",
                 "تعذر إرسال التلاوة إلى خادم التقييم الآمن حالياً. تأكد من اتصالك بالإنترنت ثم حاول مرة أخرى."

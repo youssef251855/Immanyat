@@ -11,6 +11,14 @@ test("GET /health returns Cloudflare Worker specs and recitation-only stateless 
   assert.equal(json.runtime, "cloudflare-workers");
   assert.equal(json.stateless, true);
   assert.equal(json.purpose, "quran-recitation-correction-only");
+  assert.equal(json.primaryModel, "gemini-4-hydrogen");
+  assert.deepEqual(json.models, [
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-2.5-flash"
+  ]);
   assert.equal(json.storagePolicy, "stateless-no-audio-retention");
   assert.ok(Array.isArray(json.smartVerification));
   assert.ok(json.limits.maxAudioBase64Length === 8 * 1024 * 1024);
@@ -222,6 +230,7 @@ test("POST /api/gemini/recitation-audio proxies valid recitation statelessly wit
   const res = await handleRequest(req, { GEMINI_API_KEY: secretKey }, mockFetch);
   assert.equal(res.status, 200);
   assert.ok(capturedUrl.includes("generativelanguage.googleapis.com"));
+  assert.ok(capturedUrl.includes("/models/gemini-4-hydrogen:generateContent"), `Expected gemini-4-hydrogen endpoint, got: ${capturedUrl}`);
   const bodyText = await res.text();
   assert.ok(!bodyText.includes(secretKey));
   const json = JSON.parse(bodyText);
@@ -269,4 +278,69 @@ test("Removed PayPal and advice endpoints return 404", async () => {
   });
   const adviceRes = await handleRequest(adviceReq, {});
   assert.equal(adviceRes.status, 404);
+});
+
+test("callGeminiWithFallback auto-discovers active model from /v1beta/models when static models return 404", async () => {
+  const calledUrls = [];
+  const mockFetch = async (url) => {
+    const urlStr = String(url);
+    calledUrls.push(urlStr);
+
+    if (urlStr.includes("/v1beta/models?key=")) {
+      return new Response(JSON.stringify({
+        models: [
+          {
+            name: "models/gemini-embedding-001",
+            supportedGenerationMethods: ["embedContent"]
+          },
+          {
+            name: "models/gemini-4-hydrogen-preview",
+            supportedGenerationMethods: ["generateContent"]
+          }
+        ]
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (urlStr.includes("/models/gemini-4-hydrogen-preview:generateContent")) {
+      return new Response(JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{
+                text: JSON.stringify({
+                  isTargetSurahRecitation: true,
+                  heardTranscript: "قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد",
+                  score: 10,
+                  status: "حفظ متقن",
+                  mistakes: [],
+                  feedback: "ممتاز"
+                })
+              }]
+            }
+          }
+        ]
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    return new Response(JSON.stringify({
+      error: { code: 404, message: "This model is no longer available to new users." }
+    }), { status: 404, headers: { "Content-Type": "application/json" } });
+  };
+
+  const req = new Request("https://api.immanyat.example/api/gemini/recitation-text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      surahName: "الإخلاص",
+      correctText: "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ",
+      recitationText: "قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد"
+    })
+  });
+
+  const res = await handleRequest(req, { GEMINI_API_KEY: "new-user-key" }, mockFetch);
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.score, 10);
+  assert.ok(calledUrls.some((u) => u.includes("/v1beta/models?key=")));
+  assert.ok(calledUrls.some((u) => u.includes("/models/gemini-4-hydrogen-preview:generateContent")));
 });
