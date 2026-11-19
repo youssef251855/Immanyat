@@ -63,7 +63,26 @@ object NetworkUtils {
                 msg.contains("UnknownHostException", ignoreCase = true) ||
                 msg.contains("Unable to resolve host", ignoreCase = true) ||
                 msg.contains("no network", ignoreCase = true) ||
-                msg.contains("Failed to connect", ignoreCase = true)
+                msg.contains("Failed to connect", ignoreCase = true) ||
+                msg.contains("Chain validation failed", ignoreCase = true) ||
+                msg.contains("SSLHandshakeException", ignoreCase = true)
+            ) {
+                return true
+            }
+            current = current.cause
+            depth++
+        }
+        return false
+    }
+
+    fun isSslChainError(error: Throwable?): Boolean {
+        var current: Throwable? = error
+        var depth = 0
+        while (current != null && depth < 12) {
+            val msg = current.message.orEmpty()
+            if (current is SSLException ||
+                msg.contains("Chain validation failed", ignoreCase = true) ||
+                msg.contains("CertPathValidatorException", ignoreCase = true)
             ) {
                 return true
             }
@@ -76,6 +95,9 @@ object NetworkUtils {
     fun formatPlaybackErrorMessage(error: Throwable?, context: Context): String {
         if (!isNetworkAvailable(context)) {
             return "لا يوجد اتصال بالإنترنت حالياً. يرجى تفعيل الشبكة أو تحميل الملف للاستماع بدون نت."
+        }
+        if (isSslChainError(error)) {
+            return "تعذر التحقق من شهادة الأمان للخادم (تأكد من ضبط تاريخ ووقت الجهاز وحاول مجدداً)."
         }
         if (isNetworkOrHostError(error)) {
             return "تعذر الوصول إلى خادم البث الصوتي (تحقق من استقرار الشبكة أو حاول مجدداً)."

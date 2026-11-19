@@ -10,6 +10,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -296,7 +297,7 @@ fun LibraryScreen(
                                 )
                             }
 
-                            items(cat.articles) { article ->
+                            itemsIndexed(cat.articles, key = { _, article -> article.id }) { index, article ->
                                 GlassCardInteractive(
                                     onClick = {
                                         selectedArticle = article
@@ -340,19 +341,19 @@ fun LibraryScreen(
 
                                         Spacer(modifier = Modifier.width(10.dp))
 
-                                        // Beautiful Star/Badge for story icon
                                         Box(
                                             modifier = Modifier
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(EmeraldSecondary.copy(alpha = 0.25f)),
+                                                .background(EmeraldSecondary.copy(alpha = 0.25f))
+                                                .border(1.dp, GoldAccent.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.MenuBook,
-                                                contentDescription = null,
-                                                tint = GoldAccent,
-                                                modifier = Modifier.size(18.dp)
+                                            Text(
+                                                text = "${index + 1}",
+                                                color = GoldAccent,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
                                             )
                                         }
                                     }
@@ -447,7 +448,7 @@ fun LibraryScreen(
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                     contentPadding = PaddingValues(bottom = 80.dp)
                                 ) {
-                                    items(categories) { category ->
+                                    items(categories, key = { it.id }) { category ->
                                         GlassCardInteractive(
                                             onClick = {
                                                 selectedCategory = category

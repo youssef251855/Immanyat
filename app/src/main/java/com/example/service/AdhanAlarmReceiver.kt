@@ -81,10 +81,12 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
 
         if (action == Intent.ACTION_BOOT_COMPLETED ||
             action == "android.intent.action.LOCKED_BOOT_COMPLETED" ||
+            action == Intent.ACTION_MY_PACKAGE_REPLACED ||
             action == Intent.ACTION_TIME_CHANGED ||
             action == Intent.ACTION_TIMEZONE_CHANGED) {
 
             AdhanManager.scheduleNextAlarm(context)
+            AdhanAlarmWatchdogWorker.ensureScheduled(context)
             return
         }
 
@@ -103,15 +105,11 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
                 showPreAdhanNotification(context, prayerArabic, preMins)
                 AdhanWakeLockHolder.release()
             } else {
-                val cal = Calendar.getInstance()
-                val hour = cal.get(Calendar.HOUR_OF_DAY)
                 val isQuietSleep = !isTest &&
-                    triggerMode != "EVENING_AZKAR" &&
-                    AdhanManager.isSilentDuringSleep(context) &&
-                    (hour >= 23 || hour < 5)
+                    AdhanManager.isQuietSleepActive(context, triggerMode, prayerName)
 
                 if (isQuietSleep) {
-                    Log.d("AdhanAlarmReceiver", "Skipping $triggerMode sound during sleep hours (11PM-5AM)")
+                    Log.d("AdhanAlarmReceiver", "Skipping $triggerMode sound during sleep hours (11PM-5AM, Fajr exempted)")
                     showSilentNotification(context, prayerArabic)
                     AdhanManager.scheduleNextAlarm(context)
                     AdhanWakeLockHolder.release()

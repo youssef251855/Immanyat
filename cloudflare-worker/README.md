@@ -23,6 +23,8 @@
 
 ## المسارات المتوفرة
 - `GET /health` — فحص حالة الخادم والمواصفات وحدود الحجم وسياسة عدم حفظ التسجيلات.
+- `GET /version.json` — إرجاع بيانات التحديث التلقائي (`version.json`) لتطبيق إيمانيات على APKPure (`versionCode`، `versionName`، `forceUpdate`، `title`، `message`، `downloadUrl`، `minSupportedVersion`، `releaseNotes`).
+- `GET /api/models/quran-whisper` — إرجاع بيانات وروابط تحميل نموذج التسميع الصوتي بدون إنترنت (`ggml-base-quran-q5_0.bin`) ومواصفات الصوت المطلوبة (`16kHz Mono 16-bit PCM`) مع دعم تجاوز الرابط عبر المتغير البيئي `WHISPER_MODEL_URL`.
 - `GET /privacy` — صفحة سياسة الخصوصية الرسمية لتطبيق إيمانيات (Google Play).
 - `GET /delete-account` — صفحة تعليمات حذف الحساب والبيانات (Google Play).
 - `POST /api/gemini/recitation-text` — تصحيح التسميع الكتابي للقرآن الكريم.

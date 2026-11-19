@@ -1,3 +1,5 @@
+import appVersionManifest from "../version.json" with { type: "json" };
+
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODELS = [
   "gemini-4-hydrogen",
@@ -11,6 +13,21 @@ const MIN_AUDIO_BASE64_LENGTH = 24000;
 const MAX_TEXT_LENGTH = 25000;
 const MAX_REQUEST_BYTES = 9 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 25000;
+
+const QURAN_WHISPER_MODEL_MANIFEST = {
+  modelId: "tarteel-ai/whisper-base-ar-quran-ggml-q5_0",
+  fileName: "ggml-base-quran-q5_0.bin",
+  expectedBytes: 55295433,
+  minValidBytes: 45000000,
+  primaryUrl: "https://huggingface.co/androidapps11/whisper-base-ar-quran-ggml/resolve/main/ggml-base-quran-q5_0.bin?download=true",
+  mirrorUrls: [
+    "https://huggingface.co/herrero1234/ayahsync-model/resolve/main/ggml-base-ar-quran-q5_0.bin?download=true"
+  ],
+  sampleRateHz: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  language: "ar"
+};
 
 const ALLOWED_AUDIO_MIME_TYPES = new Set([
   "audio/mp4",
@@ -822,7 +839,7 @@ function renderPrivacyHtml(env) {
     <h2>١. البيانات التي يجمعها التطبيق وطريقة استخدامها</h2>
     <ul>
       <li><strong>حساب Google والمزامنة السحابية (اختياري):</strong> عند اختيار تسجيل الدخول بحساب Google، نحصل على الاسم، البريد الإلكتروني، ومعرّف Firebase UID لحفظ ومزامنة نقاط التسبيح والتحديات والختمة في قاعدة بيانات Cloud Firestore الخاصة بحسابك فقط.</li>
-      <li><strong>ميزة التسميع الصوتي للقرآن الكريم (الميكروفون):</strong> لا يتم تشغيل الميكروفون إطلاقاً إلا بموافقتك الصريحة وعند الضغط على زر التسميع داخل شاشة القرآن. عند اختيار إرسال التسجيل للتدقيق، يُرسل الملف الصوتي عبر اتصال مشفّر (HTTPS) إلى خادم التحليل ثم <strong>يُحذف الملف الصوتي من جهازك فوراً بعد التحليل، ولا يُخزّن أو يُحفظ على الخادم بأي شكل</strong>.</li>
+      <li><strong>ميزة التسميع الصوتي للقرآن الكريم (الميكروفون):</strong> لا يتم تشغيل الميكروفون إطلاقاً إلا بموافقتك الصريحة وعند الضغط على زر التسميع داخل شاشة القرآن. عند استخدام <strong>التسميع بدون إنترنت (Whisper)</strong> يُعالَج الصوت محلياً بالكامل على جهازك دون إرساله عبر الإنترنت. وعند اختيار التسميع السحابي الاختياري يُرسل المقطع عبر اتصال مشفّر (HTTPS) إلى خادم التحليل ثم يُحذف فوراً دون أي تخزين.</li>
       <li><strong>الموقع الجغرافي (اختياري):</strong> يُستخدم فقط عند طلبك تحديث مدينتك لحساب مواقيت الصلاة واتجاه القبلة، ويمكنك اختيار مدينتك يدوياً دون منح إذن الموقع.</li>
       <li><strong>الإشعارات والمنبه الدقيق:</strong> لتنبيهك بمواقيت الصلاة وتذكيرك بورد القرآن الكريم.</li>
     </ul>
@@ -921,9 +938,38 @@ export async function handleRequest(request, env = {}, fetcher = fetch) {
           allowedAudioMimeTypes: Array.from(ALLOWED_AUDIO_MIME_TYPES)
         },
         endpoints: [
+          "/version.json",
+          "/api/models/quran-whisper",
           "/api/gemini/recitation-text",
           "/api/gemini/recitation-audio"
         ]
+      }, 200, request, env);
+    }
+
+    if (request.method === "GET" && (path === "/version.json" || path === "/api/app/version")) {
+      return jsonResponse({
+        versionCode: Number(env?.APP_VERSION_CODE || appVersionManifest.versionCode || 2),
+        versionName: String(env?.APP_VERSION_NAME || appVersionManifest.versionName || "1.5"),
+        forceUpdate: typeof env?.APP_FORCE_UPDATE === "string"
+          ? env.APP_FORCE_UPDATE.toLowerCase() === "true"
+          : Boolean(appVersionManifest.forceUpdate),
+        title: String(env?.APP_UPDATE_TITLE || appVersionManifest.title || "تحديث جديد لتطبيق إيمانيات ✨"),
+        message: String(env?.APP_UPDATE_MESSAGE || appVersionManifest.message || ""),
+        downloadUrl: String(env?.APP_DOWNLOAD_URL || appVersionManifest.downloadUrl || "https://apkpure.com/p/com.immanyat.com"),
+        minSupportedVersion: Number(env?.APP_MIN_SUPPORTED_VERSION || appVersionManifest.minSupportedVersion || 1),
+        releaseNotes: String(env?.APP_RELEASE_NOTES || appVersionManifest.releaseNotes || "")
+      }, 200, request, env);
+    }
+
+    if (request.method === "GET" && path === "/api/models/quran-whisper") {
+      const overridePrimary = (env?.WHISPER_MODEL_URL || "").trim();
+      const primaryUrl = overridePrimary.startsWith("https://")
+        ? overridePrimary
+        : QURAN_WHISPER_MODEL_MANIFEST.primaryUrl;
+      return jsonResponse({
+        ok: true,
+        ...QURAN_WHISPER_MODEL_MANIFEST,
+        primaryUrl
       }, 200, request, env);
     }
 

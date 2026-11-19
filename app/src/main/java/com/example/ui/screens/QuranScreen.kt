@@ -21,10 +21,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,12 +38,21 @@ import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.Manifest
 import com.example.api.QuranApiClient
+import com.example.audio.WavAudioRecorder
+import com.example.data.QuranRecitationEvaluator
+import com.example.data.RecitationWordDiff
+import com.example.data.WordDiffStatus
 import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.GlassCard
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.EmaniatViewModel
+import com.example.whisper.ModelDownloadStatus
+import com.example.whisper.OfflineWhisperEngine
+import com.example.whisper.QuranModelManager
+import com.example.whisper.WhisperAbiUnsupportedException
+import java.util.Locale
 
 data class Surah(
     val id: Int,
@@ -144,6 +158,8 @@ fun QuranScreen(
     var activeSubTab by remember { mutableStateOf(0) } // 0 = القراءة والتسميع, 1 = المستمع الصوتي والشيوخ
     var showUpdatesBanner by remember { mutableStateOf(true) }
 
+    val modelDownloadState by viewModel.whisperModelDownloadState.collectAsStateWithLifecycle()
+
     var showMemorizationDialog by remember { mutableStateOf(false) }
     var selectedSurahForMemorization by remember { mutableStateOf<Surah?>(null) }
     var recitationText by remember { mutableStateOf("") }
@@ -153,23 +169,24 @@ fun QuranScreen(
     var evaluationResultFeedback by remember { mutableStateOf<String?>(null) }
     var evaluationResultTranscript by remember { mutableStateOf<String?>(null) }
     var evaluationResultMistakes by remember { mutableStateOf<List<String>>(emptyList()) }
+    var evaluationResultWordDiffs by remember { mutableStateOf<List<RecitationWordDiff>>(emptyList()) }
     var evaluationResultMatchedRatio by remember { mutableStateOf<Double?>(null) }
 
     // Voice Recitation (التسميع الصوتي) states
     var memorizationTab by remember { mutableStateOf(0) } // 0 = تسميع صوتي 🎙️, 1 = تسميع كتابي ✍️
+    var useOfflineWhisperMode by remember { mutableStateOf(true) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingDuration by remember { mutableStateOf(0) }
-    var recordingStartTimeMillis by remember { mutableStateOf(0L) }
     var audioFile by remember { mutableStateOf<java.io.File?>(null) }
     var isPlayingRecord by remember { mutableStateOf(false) }
     var recorderPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
-    var mediaRecorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    val wavRecorder = remember(context) { WavAudioRecorder(context) }
     var permissionError by remember { mutableStateOf<String?>(null) }
 
     fun formatDuration(seconds: Int): String {
         val m = seconds / 60
         val s = seconds % 60
-        return String.format("%02d:%02d", m, s)
+        return String.format(Locale.US, "%02d:%02d", m, s)
     }
 
     val deleteAudioFileSafely = {
@@ -201,43 +218,23 @@ fun QuranScreen(
             evaluationResultFeedback = null
             evaluationResultTranscript = null
             evaluationResultMistakes = emptyList()
+            evaluationResultWordDiffs = emptyList()
             evaluationResultMatchedRatio = null
             viewModel.pauseQuranRecitation()
             deleteAudioFileSafely()
 
-            val file = java.io.File(context.cacheDir, "recitation_${System.currentTimeMillis()}.m4a")
-            val recorder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                android.media.MediaRecorder(context)
+            val file = java.io.File(context.cacheDir, "recitation_${System.currentTimeMillis()}.wav")
+            val started = wavRecorder.start(file)
+            if (started.isSuccess) {
+                audioFile = file
+                isRecording = true
+                recordingDuration = 0
+                viewModel.triggerHaptic()
             } else {
-                @Suppress("DEPRECATION")
-                android.media.MediaRecorder()
+                deleteAudioFileSafely()
+                isRecording = false
+                permissionError = "فشل بدء التسجيل بالميكروفون (16kHz PCM). يرجى التحقق من الأذونات وإعادة المحاولة."
             }
-
-            recorder.apply {
-                setOnErrorListener { _, what, extra ->
-                    android.util.Log.w("QuranScreen", "MediaRecorder error: what=$what, extra=$extra")
-                }
-                setOnInfoListener { _, what, extra ->
-                    android.util.Log.d("QuranScreen", "MediaRecorder info: what=$what, extra=$extra")
-                }
-                setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                try {
-                    setAudioChannels(1)
-                    setAudioSamplingRate(44100)
-                    setAudioEncodingBitRate(96000)
-                } catch (_: Exception) {}
-                setOutputFile(file.absolutePath)
-                prepare()
-                start()
-            }
-            audioFile = file
-            mediaRecorder = recorder
-            isRecording = true
-            recordingDuration = 0
-            recordingStartTimeMillis = System.currentTimeMillis()
-            viewModel.triggerHaptic()
         } catch (e: Exception) {
             e.printStackTrace()
             deleteAudioFileSafely()
@@ -246,36 +243,19 @@ fun QuranScreen(
         }
     }
 
-    val stopAudioRecording: () -> Boolean = {
-        val activeRecorder = mediaRecorder
-        mediaRecorder = null
-        isRecording = false
-        if (activeRecorder == null) {
-            audioFile?.exists() == true
-        } else {
-            val elapsedMs = System.currentTimeMillis() - recordingStartTimeMillis
-            var stoppedCleanly = false
-            try {
-                activeRecorder.stop()
-                stoppedCleanly = true
-            } catch (e: RuntimeException) {
-                e.printStackTrace()
-                deleteAudioFileSafely()
-                if (elapsedMs < 1200L) {
-                    permissionError = "مدة التسجيل قصيرة جداً؛ يُرجى قراءة الآية بوضوح لمدة ثانيتين على الأقل ثم الضغط على إرسال."
-                } else {
-                    permissionError = "تعذر حفظ التسجيل الصوتي بشكل سليم. يرجى المحاولة مرة أخرى."
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                deleteAudioFileSafely()
-            } finally {
-                try {
-                    activeRecorder.release()
-                } catch (_: Exception) {}
+    val stopAudioRecording = {
+        if (isRecording || wavRecorder.isRecording) {
+            isRecording = false
+            coroutineScope.launch {
+                val res = wavRecorder.stop()
                 viewModel.triggerHaptic()
+                if (res == null || !res.file.exists() || res.durationMillis < 1200L) {
+                    deleteAudioFileSafely()
+                    permissionError = "مدة التسجيل قصيرة جداً؛ يُرجى قراءة الآية بوضوح لمدة ثانيتين على الأقل."
+                } else {
+                    audioFile = res.file
+                }
             }
-            stoppedCleanly && (audioFile?.let { it.exists() && it.length() > 0L } == true)
         }
     }
 
@@ -321,13 +301,7 @@ fun QuranScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            try {
-                mediaRecorder?.apply {
-                    if (isRecording) stop()
-                    release()
-                }
-            } catch (_: Exception) {}
-            mediaRecorder = null
+            wavRecorder.cancelAndDelete()
             isRecording = false
             deleteAudioFileSafely()
         }
@@ -1737,7 +1711,8 @@ fun QuranScreen(
             AlertDialog(
                 onDismissRequest = {
                     if (isEvaluating) return@AlertDialog
-                    stopAudioRecording()
+                    wavRecorder.cancelAndDelete()
+                    isRecording = false
                     deleteAudioFileSafely()
                     showMemorizationDialog = false
                     recitationText = ""
@@ -1746,6 +1721,7 @@ fun QuranScreen(
                     evaluationResultFeedback = null
                     evaluationResultTranscript = null
                     evaluationResultMistakes = emptyList()
+                    evaluationResultWordDiffs = emptyList()
                     evaluationResultMatchedRatio = null
                     permissionError = null
                 },
@@ -1757,7 +1733,7 @@ fun QuranScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Mic, contentDescription = null, tint = EmeraldSecondary)
-                        Text("اختبار التسميع بالذكاء الاصطناعي 🧠", color = LightWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("التسميع القرآني وتقييم التلاوة 🧠", color = LightWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 },
                 text = {
@@ -1803,6 +1779,182 @@ fun QuranScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         if (memorizationTab == 0) {
+                            // Mode selector: Offline Whisper vs Cloud Gemini
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = useOfflineWhisperMode,
+                                    onClick = {
+                                        useOfflineWhisperMode = true
+                                        viewModel.triggerHaptic()
+                                    },
+                                    label = {
+                                        Text(
+                                            "بدون إنترنت (محلي)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = EmeraldSecondary.copy(alpha = 0.2f),
+                                        selectedLabelColor = EmeraldSecondary,
+                                        labelColor = TextColorSecondary
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("offline_whisper_mode_chip")
+                                )
+                                FilterChip(
+                                    selected = !useOfflineWhisperMode,
+                                    onClick = {
+                                        useOfflineWhisperMode = false
+                                        viewModel.triggerHaptic()
+                                    },
+                                    label = {
+                                        Text(
+                                            "سحابي (Gemini)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = GoldAccent.copy(alpha = 0.2f),
+                                        selectedLabelColor = GoldAccent,
+                                        labelColor = TextColorSecondary
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("cloud_gemini_mode_chip")
+                                )
+                            }
+
+                            // Offline Whisper Model Download Progress / Status Card
+                            if (useOfflineWhisperMode) {
+                                val dlStatus = modelDownloadState.status
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when (dlStatus) {
+                                            ModelDownloadStatus.READY -> EmeraldSecondary.copy(alpha = 0.1f)
+                                            ModelDownloadStatus.FAILED -> MutedRed.copy(alpha = 0.12f)
+                                            else -> SurfaceDarkGlass
+                                        }
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        when (dlStatus) {
+                                            ModelDownloadStatus.READY -> EmeraldSecondary.copy(alpha = 0.4f)
+                                            ModelDownloadStatus.FAILED -> MutedRed.copy(alpha = 0.45f)
+                                            else -> GoldAccent.copy(alpha = 0.35f)
+                                        }
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        when (dlStatus) {
+                                            ModelDownloadStatus.READY -> {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.testTag("whisper_model_ready_badge")
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.CheckCircle,
+                                                        contentDescription = "النموذج المحلي جاهز",
+                                                        tint = EmeraldSecondary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Text(
+                                                        text = "النموذج القرآني المحلي جاهز للعمل بدون إنترنت ✅",
+                                                        color = EmeraldSecondary,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                            ModelDownloadStatus.DOWNLOADING, ModelDownloadStatus.QUEUED -> {
+                                                val totalMb = (modelDownloadState.totalBytes.coerceAtLeast(1L) / (1024.0 * 1024.0))
+                                                val doneMb = (modelDownloadState.downloadedBytes / (1024.0 * 1024.0))
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = if (dlStatus == ModelDownloadStatus.DOWNLOADING) {
+                                                            "جاري تحميل نموذج التسميع بدون إنترنت..."
+                                                        } else {
+                                                            "بانتظار توفر الشبكة لتحميل النموذج المحلي..."
+                                                        },
+                                                        color = GoldAccent,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    Text(
+                                                        text = "${modelDownloadState.progressPercent}%",
+                                                        color = LightWhite,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                if (dlStatus == ModelDownloadStatus.DOWNLOADING) {
+                                                    LinearProgressIndicator(
+                                                        progress = { (modelDownloadState.progressPercent / 100f).coerceIn(0f, 1f) },
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(6.dp)
+                                                            .clip(RoundedCornerShape(3.dp))
+                                                            .testTag("whisper_download_progress_bar"),
+                                                        color = GoldAccent,
+                                                        trackColor = GoldMuted.copy(alpha = 0.25f)
+                                                    )
+                                                    Text(
+                                                        text = String.format(Locale.US, "%.1f / %.1f MB • يعمل لاحقاً بدون إنترنت", doneMb, totalMb),
+                                                        color = TextColorSecondary,
+                                                        fontSize = 10.sp
+                                                    )
+                                                } else {
+                                                    LinearProgressIndicator(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(5.dp)
+                                                            .clip(RoundedCornerShape(3.dp))
+                                                            .testTag("whisper_download_queued_bar"),
+                                                        color = GoldAccent,
+                                                        trackColor = GoldMuted.copy(alpha = 0.25f)
+                                                    )
+                                                }
+                                            }
+                                            ModelDownloadStatus.FAILED, ModelDownloadStatus.NOT_DOWNLOADED -> {
+                                                Text(
+                                                    text = modelDownloadState.errorMessage
+                                                        ?: "نموذج التسميع بدون إنترنت (~55 MB) غير محمّل بعد.",
+                                                    color = if (dlStatus == ModelDownloadStatus.FAILED) MutedRed else TextColorSecondary,
+                                                    fontSize = 11.sp
+                                                )
+                                                TextButton(
+                                                    onClick = { viewModel.retryOfflineWhisperModelDownload() },
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.testTag("retry_whisper_download_button")
+                                                ) {
+                                                    Text(
+                                                        "تحميل / إعادة المحاولة الآن ⏬",
+                                                        color = GoldAccent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 11.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // VOICE RECITATION MODE (التسميع الصوتي)
                             if (isRecording) {
                                 // ACTIVE LISTENING STATE (يسمع الآن)
@@ -2037,12 +2189,16 @@ fun QuranScreen(
                             ) {
                                 CircularProgressIndicator(color = GoldAccent)
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "يجري الآن تدقيق الحفظ عبر خوادم إيمانيات الذكية...",
-                                    color = GoldAccent,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                        Text(
+                                            text = if (memorizationTab == 0 && useOfflineWhisperMode) {
+                                                "جاري التفريغ والتقييم محلياً بدون إنترنت (Whisper)..."
+                                            } else {
+                                                "يجري الآن تدقيق الحفظ عبر خوادم إيمانيات الذكية..."
+                                            },
+                                            color = GoldAccent,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                             }
                         }
 
@@ -2076,16 +2232,17 @@ fun QuranScreen(
 
                                         Box(
                                             modifier = Modifier
-                                                .size(54.dp)
+                                                .size(58.dp)
                                                 .clip(CircleShape)
                                                 .background(accentColor.copy(alpha = 0.15f)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = "${evaluationResultScore!!}/10",
+                                                text = "${String.format(Locale.US, "%.1f", evaluationResultScore!!)}/10",
                                                 color = accentColor,
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
+                                                fontSize = 13.sp,
+                                                modifier = Modifier.testTag("tasmee_score_badge")
                                             )
                                         }
                                     }
@@ -2109,6 +2266,70 @@ fun QuranScreen(
                                         )
                                     }
 
+                                    if (evaluationResultWordDiffs.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "مقارنة الكلمات (الأخضر صحيح • الأحمر منسي أو خطأ):",
+                                            color = GoldAccent,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        val coloredAnnotated = remember(evaluationResultWordDiffs) {
+                                            buildAnnotatedString {
+                                                evaluationResultWordDiffs.forEachIndexed { idx, item ->
+                                                    if (idx > 0) append(" ")
+                                                    when (item.status) {
+                                                        WordDiffStatus.CORRECT -> {
+                                                            withStyle(SpanStyle(color = EmeraldSecondary, fontWeight = FontWeight.SemiBold)) {
+                                                                append(item.word)
+                                                            }
+                                                        }
+                                                        WordDiffStatus.MISSED -> {
+                                                            withStyle(
+                                                                SpanStyle(
+                                                                    color = MutedRed,
+                                                                    background = MutedRed.copy(alpha = 0.22f),
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    textDecoration = TextDecoration.Underline
+                                                                )
+                                                            ) {
+                                                                append(item.word)
+                                                            }
+                                                        }
+                                                        WordDiffStatus.WRONG -> {
+                                                            withStyle(
+                                                                SpanStyle(
+                                                                    color = Color(0xFFFFB74D),
+                                                                    background = MutedRed.copy(alpha = 0.16f),
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    textDecoration = TextDecoration.LineThrough
+                                                                )
+                                                            ) {
+                                                                append(item.word)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Surface(
+                                            color = DarkBackground.copy(alpha = 0.7f),
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(0.5.dp, CardBorder),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                text = coloredAnnotated,
+                                                fontSize = 13.sp,
+                                                lineHeight = 22.sp,
+                                                modifier = Modifier
+                                                    .padding(10.dp)
+                                                    .testTag("tasmee_colored_word_diffs")
+                                            )
+                                        }
+                                    }
+
                                     if (evaluationResultMistakes.isNotEmpty()) {
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
@@ -2120,7 +2341,7 @@ fun QuranScreen(
                                         evaluationResultMistakes.forEach { mistake ->
                                             Text(
                                                 text = "• $mistake",
-                                                color = LightWhite,
+                                                color = MutedRed.copy(alpha = 0.95f),
                                                 fontSize = 11.sp,
                                                 lineHeight = 16.sp
                                             )
@@ -2147,7 +2368,8 @@ fun QuranScreen(
                     ) {
                         TextButton(
                             onClick = {
-                                stopAudioRecording()
+                                wavRecorder.cancelAndDelete()
+                                isRecording = false
                                 deleteAudioFileSafely()
                                 showMemorizationDialog = false
                                 recitationText = ""
@@ -2156,6 +2378,7 @@ fun QuranScreen(
                                 evaluationResultFeedback = null
                                 evaluationResultTranscript = null
                                 evaluationResultMistakes = emptyList()
+                                evaluationResultWordDiffs = emptyList()
                                 evaluationResultMatchedRatio = null
                                 permissionError = null
                             },
@@ -2180,44 +2403,24 @@ fun QuranScreen(
                                     evaluationResultFeedback = null
                                     evaluationResultTranscript = null
                                     evaluationResultMistakes = emptyList()
+                                    evaluationResultWordDiffs = emptyList()
                                     evaluationResultMatchedRatio = null
 
                                     if (memorizationTab == 0) {
                                         if (isPlayingRecord) {
                                             stopPlayingRecordedVoice()
                                         }
-                                        val activeRecorder = mediaRecorder
-                                        if (isRecording && activeRecorder != null) {
-                                            mediaRecorder = null
+                                        if (isRecording || wavRecorder.isRecording) {
                                             isRecording = false
-                                            val elapsedMs = System.currentTimeMillis() - recordingStartTimeMillis
-                                            val stoppedCleanly = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                try {
-                                                    activeRecorder.stop()
-                                                    true
-                                                } catch (e: RuntimeException) {
-                                                    android.util.Log.w("QuranScreen", "MediaRecorder stop failed", e)
-                                                    false
-                                                } catch (e: Exception) {
-                                                    android.util.Log.w("QuranScreen", "MediaRecorder stop error", e)
-                                                    false
-                                                } finally {
-                                                    try {
-                                                        activeRecorder.release()
-                                                    } catch (_: Exception) {}
-                                                }
-                                            }
+                                            val wavResult = wavRecorder.stop()
                                             viewModel.triggerHaptic()
-                                            if (!stoppedCleanly || audioFile?.exists() != true) {
+                                            if (wavResult == null || !wavResult.file.exists() || wavResult.durationMillis < 1200L) {
                                                 deleteAudioFileSafely()
-                                                permissionError = if (elapsedMs < 1200L) {
-                                                    "مدة التسجيل قصيرة جداً؛ يُرجى قراءة الآية بوضوح لمدة ثانيتين على الأقل ثم الضغط على إرسال."
-                                                } else {
-                                                    "تعذر حفظ التسجيل الصوتي بشكل سليم. يرجى المحاولة مرة أخرى."
-                                                }
+                                                permissionError = "مدة التسجيل قصيرة جداً؛ يُرجى قراءة الآية بوضوح لمدة ثانيتين على الأقل ثم الضغط على إرسال."
                                                 isEvaluating = false
                                                 return@launch
                                             }
+                                            audioFile = wavResult.file
                                         }
                                     }
 
@@ -2227,6 +2430,58 @@ fun QuranScreen(
                                             localQuranJson = loadedMap
                                         }
                                         getSurahFullText(surah.id, loadedMap, fallbackVerses)
+                                    }
+
+                                    if (memorizationTab == 0 && useOfflineWhisperMode) {
+                                        val file = audioFile
+                                        if (file == null || !file.exists()) {
+                                            evaluationResultScore = 0.0
+                                            evaluationResultStatus = "ملف مفقود"
+                                            evaluationResultFeedback = "نعتذر، لم يتم العثور على تلاوتك الصوتية المسجلة. يرجى الضغط على الميكروفون وإعادة المحاولة."
+                                            isEvaluating = false
+                                            return@launch
+                                        }
+                                        if (!QuranModelManager.isModelReady(context)) {
+                                            viewModel.retryOfflineWhisperModelDownload()
+                                            evaluationResultScore = 0.0
+                                            evaluationResultStatus = "النموذج قيد التحميل ⏬"
+                                            evaluationResultFeedback = "نموذج التسميع بدون إنترنت ما زال قيد التحميل (${modelDownloadState.progressPercent}%). يرجى الانتظار حتى يكتمل أو التبديل مؤقتاً إلى التقييم السحابي."
+                                            isEvaluating = false
+                                            return@launch
+                                        }
+
+                                        try {
+                                            val transcript = OfflineWhisperEngine.transcribeWav(
+                                                context = context,
+                                                wavPath = file.absolutePath
+                                            )
+                                            val offlineEval = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                                QuranRecitationEvaluator.evaluate(
+                                                    surahName = surah.arabicName,
+                                                    originalReferenceText = correctText,
+                                                    transcribedText = transcript
+                                                )
+                                            }
+                                            evaluationResultScore = offlineEval.score
+                                            evaluationResultStatus = offlineEval.status
+                                            evaluationResultFeedback = offlineEval.feedback
+                                            evaluationResultTranscript = offlineEval.heardTranscript.takeIf { it.isNotBlank() }
+                                            evaluationResultMatchedRatio = offlineEval.matchedRatio
+                                            evaluationResultMistakes = offlineEval.mistakeWords
+                                            evaluationResultWordDiffs = offlineEval.wordDiffs
+                                            deleteAudioFileSafely()
+                                        } catch (e: WhisperAbiUnsupportedException) {
+                                            evaluationResultScore = 0.0
+                                            evaluationResultStatus = "المعالج غير مدعوم محلياً ⚙️"
+                                            evaluationResultFeedback = e.message ?: "جهازك لا يدعم التشغيل المحلي لنموذج Whisper (arm64-v8a فقط). يمكنك استخدام الوضع السحابي أعلاه."
+                                        } catch (e: Exception) {
+                                            evaluationResultScore = 0.0
+                                            evaluationResultStatus = "تعذر التفريغ الصوتي ⚠️"
+                                            evaluationResultFeedback = "حدث خطأ أثناء تحليل التلاوة محلياً: ${e.message ?: "خطأ غير متوقع"}"
+                                        } finally {
+                                            isEvaluating = false
+                                        }
+                                        return@launch
                                     }
 
                                     val responseJson = if (memorizationTab == 0) {
@@ -2241,7 +2496,7 @@ fun QuranScreen(
                                                     surahName = surah.arabicName,
                                                     correctText = correctText,
                                                     audioBase64 = base64,
-                                                    mimeType = "audio/mp4"
+                                                    mimeType = "audio/wav"
                                                 )
                                             } else {
                                                 """{"score":0.0,"status":"ملف مفقود","feedback":"نعتذر، لم يتم العثور على تلاوتك الصوتية المسجلة. يرجى الضغط على الميكروفون وإعادة المحاولة."}"""
@@ -2264,10 +2519,12 @@ fun QuranScreen(
                                             .replace("```", "")
                                             .trim()
                                         val jsonObject = org.json.JSONObject(cleanJson)
-                                        evaluationResultScore = jsonObject.optDouble("score", 0.0)
+                                        val parsedScore = jsonObject.optDouble("score", 0.0)
+                                        evaluationResultScore = QuranRecitationEvaluator.roundToOneDecimal(parsedScore)
                                         evaluationResultStatus = jsonObject.optString("status", "غير معروف")
                                         evaluationResultFeedback = jsonObject.optString("feedback", "")
-                                        evaluationResultTranscript = jsonObject.optString("transcript", "").takeIf { it.isNotBlank() }
+                                        val transcriptText = jsonObject.optString("transcript", "").takeIf { it.isNotBlank() }
+                                        evaluationResultTranscript = transcriptText
                                         val ratio = jsonObject.optDouble("matchedRatio", Double.NaN)
                                         evaluationResultMatchedRatio = if (ratio.isNaN()) null else ratio
                                         val mistakesArr = jsonObject.optJSONArray("mistakes")
@@ -2279,12 +2536,22 @@ fun QuranScreen(
                                             }
                                         }
                                         evaluationResultMistakes = parsedMistakes
+
+                                        val textForDiff = if (memorizationTab == 0) transcriptText else recitationText
+                                        if (!textForDiff.isNullOrBlank()) {
+                                            evaluationResultWordDiffs = QuranRecitationEvaluator.evaluate(
+                                                surahName = surah.arabicName,
+                                                originalReferenceText = correctText,
+                                                transcribedText = textForDiff
+                                            ).wordDiffs
+                                        }
                                     } catch (e: Exception) {
                                         evaluationResultScore = 0.0
                                         evaluationResultStatus = "تنبيه الفحص ⚠️"
-                                        evaluationResultFeedback = "نعتذر يا طيب، واجهتنا مشكلة في معالجة نتيجة التسميع الحالية. يرجى إعادة المحاولة والتأكد من الاتصال بالإنترنت."
+                                        evaluationResultFeedback = "نعتذر يا طيب، واجهتنا مشكلة في معالجة نتيجة التسميع الحالية. يرجى إعادة المحاولة."
                                         evaluationResultTranscript = null
                                         evaluationResultMistakes = emptyList()
+                                        evaluationResultWordDiffs = emptyList()
                                         evaluationResultMatchedRatio = null
                                     } finally {
                                         isEvaluating = false
@@ -2299,7 +2566,13 @@ fun QuranScreen(
                             enabled = canStartEvaluation
                         ) {
                             Text(
-                                text = if (memorizationTab == 0 && isRecording) "إرسال للتصحيح 📤" else if (memorizationTab == 0) "إرسال للتصحيح 📤" else "بدء التدقيق 🧠",
+                                text = if (memorizationTab == 0 && useOfflineWhisperMode) {
+                                    "تقييم بدون إنترنت 🎙️"
+                                } else if (memorizationTab == 0) {
+                                    "إرسال للتصحيح 📤"
+                                } else {
+                                    "بدء التدقيق 🧠"
+                                },
                                 color = DarkBackground,
                                 fontWeight = FontWeight.Bold
                             )
@@ -2332,7 +2605,7 @@ fun QuranScreen(
                 },
                 text = {
                     Text(
-                        text = "لتقييم حفظك وتصحيح التلاوة، سيقوم التطبيق بتسجيل صوتك عند ضغطك على زر التسجيل وإرسال المقطع عبر اتصال مشفّر (HTTPS) إلى خدمة التحليل الذكي.\n\n• لا يتم تسجيل الصوت في الخلفية إطلاقاً.\n• تُحذف الملفات الصوتية المؤقتة فور انتهاء التقييم ولا يتم تخزينها على الخادم.",
+                        text = "لتقييم حفظك وتصحيح التلاوة، سيقوم التطبيق بتسجيل صوتك عند ضغطك على زر التسجيل. في وضع التسميع بدون إنترنت (Whisper) يُعالج الصوت محلياً بالكامل على جهازك، وفي الوضع السحابي الاختياري يُرسل عبر اتصال مشفّر (HTTPS) لخادم التحليل.\n\n• لا يتم تسجيل الصوت في الخلفية إطلاقاً.\n• تُحذف الملفات الصوتية المؤقتة فور انتهاء التقييم.",
                         color = TextColorSecondary,
                         fontSize = 12.sp,
                         lineHeight = 19.sp

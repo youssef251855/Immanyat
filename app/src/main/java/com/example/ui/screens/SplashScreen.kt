@@ -1,8 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -34,23 +31,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.AppUpdateCheckResult
+import com.example.data.AppUpdateChecker
 import com.example.data.UpdateInfo
 import com.example.data.UpdateManager
 import com.example.ui.components.ElegantBackgroundPattern
 import com.example.ui.components.IslamicOrnamentDivider
 import com.example.ui.components.IslamicStarStarIcon
 import com.example.ui.theme.*
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun SplashScreen(
     onSplashFinished: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateInfoState by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -85,37 +80,39 @@ fun SplashScreen(
     LaunchedEffect(Unit) {
         startAnimationState = true
         val startTime = System.currentTimeMillis()
-        
-        // Asynchronously check updates
-        var updateResult: UpdateInfo? = null
-        try {
-            updateResult = withContext(Dispatchers.IO) {
-                UpdateManager.fetchUpdateInfo(context)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+
+        val updateCheckResult = try {
+            AppUpdateChecker.checkForUpdateOnLaunch(context)
+        } catch (_: Throwable) {
+            AppUpdateCheckResult.UnavailableOrSkipped
         }
 
-        val endTime = System.currentTimeMillis()
-        val duration = endTime - startTime
-        // Require splash display for at least 2.5 seconds for visual harmony
-        if (duration < 2500) {
-            delay(2500 - duration)
+        val elapsed = System.currentTimeMillis() - startTime
+        if (elapsed < 2500) {
+            delay(2500 - elapsed)
         }
 
-        if (updateResult != null) {
-            val currentCode = UpdateManager.getCurrentVersionCode(context)
-            if (updateResult.latestVersionCode > currentCode) {
-                val forced = currentCode < updateResult.minRequiredVersionCode || updateResult.isForceUpdate
-                updateInfoState = updateResult
-                isUpdateForced = forced
+        when (updateCheckResult) {
+            is AppUpdateCheckResult.UpdateAvailable -> {
+                val m = updateCheckResult.manifest
+                updateInfoState = UpdateInfo(
+                    latestVersionCode = m.versionCode,
+                    latestVersionName = m.versionName,
+                    minRequiredVersionCode = m.minSupportedVersion,
+                    isForceUpdate = m.forceUpdate,
+                    title = m.title,
+                    message = m.message,
+                    changelogAr = m.releaseNotes.ifBlank { m.message },
+                    changelogEn = "",
+                    updateUrl = m.downloadUrl
+                )
+                isUpdateForced = updateCheckResult.isForced
                 showUpdateDialog = true
-            } else {
+            }
+            else -> {
+                // Offline, network failure, malformed JSON, or up-to-date: proceed smoothly without blocking app.
                 onSplashFinished()
             }
-        } else {
-            // Null implies no remote manifest (404) or offline mode. Proceed smoothly.
-            onSplashFinished()
         }
     }
 
@@ -240,6 +237,7 @@ fun SplashScreen(
             isForced = isUpdateForced,
             onDismissRequest = {
                 if (!isUpdateForced) {
+                    AppUpdateChecker.markOptionalUpdateDismissedForSession()
                     showUpdateDialog = false
                     onSplashFinished()
                 }
@@ -302,13 +300,26 @@ fun UpdateAlertDialog(
 
                 // Title
                 Text(
-                    text = if (isForced) "تحديث إجباري هام! ⚠️" else "إصدار جديد متوفر الآن! ✨",
-                    color = if (isForced) GoldAccent else GoldAccent,
+                    text = updateInfo.title.ifBlank {
+                        if (isForced) "تحديث إجباري هام! ⚠️" else "تحديث جديد متوفر الآن! ✨"
+                    },
+                    color = GoldAccent,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp,
                     textAlign = TextAlign.Center
                 )
+
+                if (updateInfo.message.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = updateInfo.message,
+                        color = TextColorPrimary,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -419,11 +430,9 @@ fun UpdateAlertDialog(
                 ) {
                     Button(
                         onClick = {
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.updateUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "يبدو أن رابط التحديث غير متاح حاليًا.", Toast.LENGTH_LONG).show()
+                            val opened = AppUpdateChecker.openApkPurePage(context, updateInfo.updateUrl)
+                            if (!opened) {
+                                Toast.makeText(context, "تعذر فتح صفحة التحديث على APKPure حالياً.", Toast.LENGTH_LONG).show()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
@@ -432,6 +441,7 @@ fun UpdateAlertDialog(
                             .fillMaxWidth()
                             .height(48.dp)
                             .shadow(4.dp, RoundedCornerShape(12.dp))
+                            .testTag("update_now_button")
                     ) {
                         Text(
                             text = "تحديث الآن 🚀",
@@ -450,9 +460,10 @@ fun UpdateAlertDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
+                                .testTag("update_later_button")
                         ) {
                             Text(
-                                text = "تحديث لاحقاً",
+                                text = "لاحقاً",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
                             )

@@ -67,6 +67,11 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
         run: |
+          if ! grep -qE 'applicationId\s*=\s*"com\.immanyat\.com"' app/build.gradle.kts; then
+            echo "::error::اسم الحزمة applicationId يجب أن يكون com.immanyat.com دائماً!"
+            exit 1
+          fi
+
           if [ -n "$SIGNING_KEY" ]; then
             echo "has_signing_key=true" >> "$GITHUB_OUTPUT"
           else
@@ -336,6 +341,9 @@ jobs:
           fi
 
           USER_SHA256_CLEAN=$(printf '%s' "$USER_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          USER_SHA1=$(LC_ALL=C keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$RESOLVED_STORE_PASS" -alias "$RESOLVED_ALIAS" | awk '/SHA1:/{print $2; exit}')
+          USER_SHA1_CLEAN=$(printf '%s' "$USER_SHA1" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+
           AAB_SHA256=$(LC_ALL=C keytool -printcert -jarfile "$FINAL_AAB" | awk '/SHA256:/{print $2; exit}')
           AAB_SHA256_CLEAN=$(printf '%s' "$AAB_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
           if [ -z "$AAB_SHA256_CLEAN" ] || [ "$AAB_SHA256_CLEAN" != "$USER_SHA256_CLEAN" ]; then
@@ -343,8 +351,9 @@ jobs:
             exit 1
           fi
 
-          # 6) Verify Release APK signature and confirm SHA-256 matches user's keystore
+          # 6) Verify Release APK signature, Package Name, Version, and confirm SHA-1 & SHA-256 match user's keystore
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           RAW_APK=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" ! -name "emaniat-release-signed.apk" | head -n 1)
           if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
             echo "::error::لم يتم العثور على ملف APK الناتج في app/build/outputs/apk/release."
@@ -363,10 +372,30 @@ jobs:
               "$RAW_APK"
           fi
 
-          APK_SHA256=$("$APKSIGNER" verify --print-certs "$FINAL_APK" | awk -F'digest: ' '/SHA-256 digest:/{print tolower($2); exit}')
+          APK_CERTS_OUT=$("$APKSIGNER" verify --print-certs "$FINAL_APK")
+          APK_SHA256=$(printf '%s\n' "$APK_CERTS_OUT" | awk -F'digest: ' '/SHA-256 digest:/{print tolower($2); exit}')
+          APK_SHA1=$(printf '%s\n' "$APK_CERTS_OUT" | awk -F'digest: ' '/SHA-1 digest:/{print tolower($2); exit}')
           if [ -z "$APK_SHA256" ] || [ "$APK_SHA256" != "$USER_SHA256_CLEAN" ]; then
             echo "::error::بصمة توقيع ملف APK ($APK_SHA256) لا تطابق بصمة مفتاحك ($USER_SHA256_CLEAN)!"
             exit 1
+          fi
+          if [ -n "$USER_SHA1_CLEAN" ] && [ "$APK_SHA1" != "$USER_SHA1_CLEAN" ]; then
+            echo "::error::بصمة SHA-1 لملف APK ($APK_SHA1) لا تطابق مفتاحك ($USER_SHA1_CLEAN)!"
+            exit 1
+          fi
+
+          APK_PACKAGE="unknown"
+          APK_VER_CODE="unknown"
+          APK_VER_NAME="unknown"
+          if [ -n "$AAPT2" ]; then
+            BADGING=$("$AAPT2" dump badging "$FINAL_APK" | head -n 1 || true)
+            APK_PACKAGE=$(printf '%s' "$BADGING" | sed -n "s/.*package: name='\([^']*\)'.*/\1/p")
+            APK_VER_CODE=$(printf '%s' "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+            APK_VER_NAME=$(printf '%s' "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+            if [ "$APK_PACKAGE" != "com.immanyat.com" ]; then
+              echo "::error::اسم الحزمة داخل ملف APK هو '$APK_PACKAGE' وليس 'com.immanyat.com'!"
+              exit 1
+            fi
           fi
 
           RELEASE_BUILD_CONFIG=$(find app/build/generated/source/buildConfig/release -name "BuildConfig.java" | head -n 1)
@@ -382,7 +411,10 @@ jobs:
 
           {
             echo "### Release AAB & APK (Signed with Your Upload Key)"
+            echo "- Package Name: \`$APK_PACKAGE\`"
+            echo "- Version: \`$APK_VER_NAME\` (\`$APK_VER_CODE\`)"
             echo "- Alias: \`$RESOLVED_ALIAS\`"
+            echo "- SHA-1: \`$USER_SHA1\`"
             echo "- SHA-256: \`$USER_SHA256\`"
             echo "- Embedded BACKEND_BASE_URL: \`$EMBEDDED_RELEASE_URL\`"
             echo "- AAB: \`$FINAL_AAB\`"
@@ -392,7 +424,7 @@ jobs:
           echo "### AAB Certificate" >> "$GITHUB_STEP_SUMMARY"
           LC_ALL=C keytool -printcert -jarfile "$FINAL_AAB" | tee -a "$GITHUB_STEP_SUMMARY" || true
           echo "### APK Certificate" >> "$GITHUB_STEP_SUMMARY"
-          "$APKSIGNER" verify --print-certs "$FINAL_APK" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          printf '%s\n' "$APK_CERTS_OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Clean Up Release Keystore
         if: always()

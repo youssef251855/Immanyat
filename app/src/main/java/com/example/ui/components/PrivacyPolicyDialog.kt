@@ -19,7 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.BuildConfig
+import com.example.data.SecureApiConfig
 import com.example.ui.theme.*
 
 @Composable
@@ -27,9 +27,8 @@ fun PrivacyPolicyDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val backendBaseUrl = BuildConfig.BACKEND_BASE_URL.trim().removeSuffix("/")
-    val hasWebPolicyUrl = backendBaseUrl.startsWith("https://", ignoreCase = true) &&
-        backendBaseUrl.length > "https://".length
+    val backendBaseUrl = SecureApiConfig.getHttpsBackendBaseUrl()
+    val hasWebPolicyUrl = backendBaseUrl != null
 
     AlertDialog(
         onDismissRequest = onDismiss,

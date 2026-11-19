@@ -327,6 +327,34 @@ object AdhanManager {
         getPrefs(context).edit().putBoolean("silent_sleep", enabled).apply()
     }
 
+    /**
+     * Evaluates whether silent sleep mode (11 PM - 5 AM) should mute an incoming alert.
+     * Summer Fajr Adhan & Fajr Iqamah (which often occur between 3:00 AM and 5:00 AM)
+     * and Evening Azkar are ALWAYS exempted so Fajr is never muted.
+     */
+    fun isQuietSleepActive(
+        context: Context,
+        triggerMode: String,
+        prayerName: String,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (!isSilentDuringSleep(context)) return false
+        if (triggerMode == "EVENING_AZKAR") return false
+        if (prayerName.equals("Fajr", ignoreCase = true)) return false
+        val cal = Calendar.getInstance().apply { timeInMillis = nowMillis }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        return hour >= 23 || hour < 5
+    }
+
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+        } else {
+            true
+        }
+    }
+
     fun isTravelMode(context: Context): Boolean {
         return getPrefs(context).getBoolean("travel_mode", false)
     }

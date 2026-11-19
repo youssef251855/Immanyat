@@ -86,6 +86,18 @@ fun loadVideosFromAssets(context: android.content.Context): List<HistoryVideo> {
     }
 }
 
+private fun buildVideoMirrorUrls(primaryUrl: String): List<String> {
+    val urls = linkedSetOf(primaryUrl)
+    val match = Regex("^https?://([a-z0-9]+)\\.top4top\\.io/(.+)$", RegexOption.IGNORE_CASE).find(primaryUrl.trim())
+    if (match != null) {
+        val filePart = match.groupValues[2]
+        listOf("m", "j", "n", "p", "r").forEach { sub ->
+            urls.add("https://$sub.top4top.io/$filePart")
+        }
+    }
+    return urls.toList()
+}
+
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun VideosScreen(
@@ -110,7 +122,7 @@ fun VideosScreen(
                     description = "سرد متكامل وشامل لأدق تفاصيل غزوة بدر الكبرى المباركة، بدءاً من اعتراض القافلة، شورى النبي صلى الله عليه وسلم، وخطط التحام الصفوف والمدد الإلهي العظيم للمؤمنين الصابرين.",
                     duration = "18:40",
                     speaker = "أثرياء السرد والتفسير الإيماني",
-                    videoUrl = "https://gyepptdcymcwzotdgyrn.supabase.co/storage/v1/object/sign/Test/Badr.mp4?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xZjRiNmQzNC1iZDExLTQ4ZjAtYjc1OC1kMTNjMzgwYjBjYWMiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJUZXN0L0JhZHIubXA0IiwiaWF0IjoxNzgwNDE3NDMzLCJleHAiOjE4MTE5NTM0MzN9.7Put-8ievXrow3AX0751Ex7a0_76-CUvTYDs5C1C6JU",
+                    videoUrl = "https://j.top4top.io/m_39734uiyy2.mp4",
                     views = "٨٥ ألف مشاهدة • عبر شبكة البث",
                     gradientColors = listOf(Color(0xFF0F5A3E), Color(0xFF03221E)),
                     category = "badr"
@@ -121,7 +133,7 @@ fun VideosScreen(
                     description = "سرد تفصيلي لمجريات غزوة أحد العظيمة، خطة جبل الرماة الحربية العبقرية، الاستدراج العسكري العنيف بعد ترك الجبل، استشهاد سيد الشهداء حمزة رضي الله عنه، والدروس النبوية الإيمانية الخالدة للصحبة الكرام.",
                     duration = "20:05",
                     speaker = "أثرياء السرد والتفسير الإيماني",
-                    videoUrl = "https://gyepptdcymcwzotdgyrn.supabase.co/storage/v1/object/sign/Test/auht.mp4?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xZjRiNmQzNC1iZDExLTQ4ZjAtYjc1OC1kMTNjMzgwYjBjYWMiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJUZXN0L2F1aHQubXA0IiwiaWF0IjoxNzgwNDE3MTc0LCJleHAiOjE4MTE5NTMxNzR9._8t9pMhT93vkyaFGNmrT1O6PdNcMo9FLiRvrI46XVeU",
+                    videoUrl = "https://m.top4top.io/m_3973zm0by1.mp4",
                     views = "٧٢ ألف مشاهدة • عبر شبكة البث",
                     gradientColors = listOf(Color(0xFFAD7813), Color(0xFF472D02)),
                     category = "uhud"
@@ -150,7 +162,7 @@ fun VideosScreen(
     // ExoPlayer declaration
     var exoPlayerInstance by remember { mutableStateOf<ExoPlayer?>(null) }
 
-    // Initialize/release ExoPlayer safely
+    // Initialize/release ExoPlayer safely with automatic HTTPS mirror fallback
     DisposableEffect(activeVideo, retryTrigger) {
         // Automatically pause ongoing Quran recitation to avoid sound overlapping!
         viewModel.pauseQuranRecitation()
@@ -160,7 +172,10 @@ fun VideosScreen(
         runningTime = "00:00"
         playerError = null
 
+        val candidateUrls = buildVideoMirrorUrls(activeVideo.videoUrl)
+        var currentUrlIndex = 0
         val isRemoteUrl = activeVideo.videoUrl.startsWith("http", ignoreCase = true)
+
         if (isRemoteUrl && !NetworkUtils.isNetworkAvailable(context)) {
             playerError = "لا يوجد اتصال بالإنترنت لتشغيل المقطع المرئي. فعّل الشبكة ثم اضغط إعادة المحاولة."
             exoPlayerInstance = null
@@ -169,8 +184,7 @@ fun VideosScreen(
             }
         } else {
             val player = ExoPlayer.Builder(context).build().apply {
-                val mediaItem = MediaItem.fromUri(activeVideo.videoUrl)
-                setMediaItem(mediaItem)
+                setMediaItem(MediaItem.fromUri(candidateUrls[0]))
                 prepare()
                 volume = if (isMuted) 0f else 1f
 
@@ -183,8 +197,14 @@ fun VideosScreen(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        isPlaying = false
-                        playerError = NetworkUtils.formatPlaybackErrorMessage(error, context)
+                        if (currentUrlIndex + 1 < candidateUrls.size && NetworkUtils.isNetworkAvailable(context)) {
+                            currentUrlIndex++
+                            setMediaItem(MediaItem.fromUri(candidateUrls[currentUrlIndex]))
+                            prepare()
+                        } else {
+                            isPlaying = false
+                            playerError = NetworkUtils.formatPlaybackErrorMessage(error, context)
+                        }
                     }
                 })
             }

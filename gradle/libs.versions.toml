@@ -41,6 +41,8 @@ googleServices = "4.4.2"
 secretsGradlePlugin = "2.0.1"
 
 media3 = "1.5.1"
+workRuntimeKtx = "2.10.1"
+whisperAndroid = "1.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -97,6 +99,8 @@ googleid = { group = "com.google.android.libraries.identity.googleid", name = "g
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai" }
 adhan = { group = "com.batoulapps.adhan", name = "adhan", version = "1.2.1" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntimeKtx" }
+whisper-android = { group = "dev.ffmpegkit-maintained", name = "whisper-android", version.ref = "whisperAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

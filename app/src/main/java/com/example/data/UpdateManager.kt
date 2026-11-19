@@ -1,137 +1,47 @@
 package com.example.data
 
 import android.content.Context
-import android.os.Build
-import android.util.Log
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 data class UpdateInfo(
     val latestVersionCode: Int,
     val latestVersionName: String,
     val minRequiredVersionCode: Int,
-    val isForceUpdate: Boolean, // Backup flag for explicit forced updates
+    val isForceUpdate: Boolean,
+    val title: String,
+    val message: String,
     val changelogAr: String,
     val changelogEn: String,
     val updateUrl: String
 )
 
+/**
+ * Compatibility facade delegating to [AppUpdateChecker].
+ */
 object UpdateManager {
-    private const val TAG = "UpdateManager"
-    
-    // Default raw URL hosted on GitHub for testing, but fully customisable
-    private const val DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/efootballpes2025ff/configs/main/emaniat-update.json"
-    
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
+    fun getCurrentVersionCode(context: Context): Int = AppUpdateChecker.getCurrentVersionCode(context)
 
-    /**
-     * Gets the current app's versionCode.
-     */
-    fun getCurrentVersionCode(context: Context): Int {
-        return try {
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                packageInfo.longVersionCode.toInt()
-            } else {
-                @Suppress("DEPRECATION")
-                packageInfo.versionCode
-            }
-        } catch (e: Exception) {
-            1
-        }
-    }
+    fun getCurrentVersionName(context: Context): String = AppUpdateChecker.getCurrentVersionName(context)
 
-    /**
-     * Gets the current app's versionName.
-     */
-    fun getCurrentVersionName(context: Context): String {
-        return try {
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            packageInfo.versionName ?: "1.0"
-        } catch (e: Exception) {
-            "1.0"
-        }
-    }
-
-    /**
-     * Fetches update details from the remote JSON endpoint.
-     * Catches and logs all errors, returning null if the fetch fails (supports offline mode gracefully).
-     */
     fun fetchUpdateInfo(context: Context, customUrl: String? = null): UpdateInfo? {
-        val urlToUse = (customUrl ?: getUpdateUrl(context)).trim()
-        if (!urlToUse.startsWith("https://", ignoreCase = true)) {
-            Log.w(TAG, "Rejected non-HTTPS update URL")
-            return null
-        }
-        Log.d(TAG, "Fetching update info from: $urlToUse")
-
-        val request = Request.Builder()
-            .url(urlToUse)
-            .header("Cache-Control", "no-cache") // Ensure fresh update check
-            .build()
-
-        try {
-            client.newCall(request).execute().use { response ->
-                if (response.code == 404) {
-                    Log.i(TAG, "No remote update manifest found (HTTP 404); skipping update prompt.")
-                    return null
-                }
-                if (!response.isSuccessful) {
-                    Log.w(TAG, "Update check returned HTTP ${response.code}")
-                    return null
-                }
-
-                val bodyString = response.body?.string() ?: return null
-                Log.d(TAG, "Update response details received (${bodyString.length} bytes)")
-
-                val json = JSONObject(bodyString)
-                val latestVersionCode = json.optInt("latestVersionCode", 1)
-                val latestVersionName = json.optString("latestVersionName", "1.0")
-                val minRequiredVersionCode = json.optInt("minRequiredVersionCode", 1)
-                val isForceUpdate = json.optBoolean("isForceUpdate", false)
-                val changelogAr = json.optString("changelogAr", "")
-                val changelogEn = json.optString("changelogEn", "")
-                val defaultStoreUrl = "https://play.google.com/store/apps/details?id=com.immanyat.com"
-                val rawUpdateUrl = json.optString("updateUrl", defaultStoreUrl).trim()
-                val safeUpdateUrl = if (rawUpdateUrl.startsWith("https://", ignoreCase = true)) {
-                    rawUpdateUrl
-                } else {
-                    defaultStoreUrl
-                }
-
-                return UpdateInfo(
-                    latestVersionCode = latestVersionCode,
-                    latestVersionName = latestVersionName,
-                    minRequiredVersionCode = minRequiredVersionCode,
-                    isForceUpdate = isForceUpdate,
-                    changelogAr = changelogAr,
-                    changelogEn = changelogEn,
-                    updateUrl = safeUpdateUrl
-                )
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Update check unavailable: ${e.message}")
-            return null
-        }
+        val manifest = AppUpdateChecker.fetchManifestBlocking(context, customUrl) ?: return null
+        return UpdateInfo(
+            latestVersionCode = manifest.versionCode,
+            latestVersionName = manifest.versionName,
+            minRequiredVersionCode = manifest.minSupportedVersion,
+            isForceUpdate = manifest.forceUpdate,
+            title = manifest.title,
+            message = manifest.message,
+            changelogAr = manifest.releaseNotes.ifBlank { manifest.message },
+            changelogEn = "",
+            updateUrl = manifest.downloadUrl
+        )
     }
 
-    /**
-     * Gets the configured update URL from persistent preferences.
-     */
     fun getUpdateUrl(context: Context): String {
-        val prefs = context.getSharedPreferences("emaniat_prefs", Context.MODE_PRIVATE)
-        val saved = prefs.getString("update_config_url", DEFAULT_UPDATE_URL) ?: DEFAULT_UPDATE_URL
-        return if (saved.startsWith("https://", ignoreCase = true)) saved else DEFAULT_UPDATE_URL
+        return AppUpdateChecker.resolveVersionJsonUrl(context)
+            ?: AppUpdateChecker.DEFAULT_VERSION_JSON_URL
     }
 
-    /**
-     * Sets or overrides the update check URL only when it uses HTTPS.
-     */
     fun setUpdateUrl(context: Context, url: String) {
         val trimmed = url.trim()
         if (!trimmed.startsWith("https://", ignoreCase = true)) return

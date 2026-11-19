@@ -21,7 +21,30 @@ test("GET /health returns Cloudflare Worker specs and recitation-only stateless 
   ]);
   assert.equal(json.storagePolicy, "stateless-no-audio-retention");
   assert.ok(Array.isArray(json.smartVerification));
+  assert.ok(json.endpoints.includes("/api/models/quran-whisper"));
   assert.ok(json.limits.maxAudioBase64Length === 8 * 1024 * 1024);
+});
+
+test("GET /api/models/quran-whisper returns offline Whisper model manifest and respects WHISPER_MODEL_URL override", async () => {
+  const req = new Request("https://api.immanyat.example/api/models/quran-whisper", { method: "GET" });
+  const res = await handleRequest(req, {});
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.ok, true);
+  assert.equal(json.fileName, "ggml-base-quran-q5_0.bin");
+  assert.equal(json.expectedBytes, 55295433);
+  assert.equal(json.sampleRateHz, 16000);
+  assert.equal(json.channels, 1);
+  assert.equal(json.bitsPerSample, 16);
+  assert.ok(json.primaryUrl.startsWith("https://huggingface.co/"));
+  assert.ok(Array.isArray(json.mirrorUrls) && json.mirrorUrls.length >= 1);
+
+  const overridden = await handleRequest(req, {
+    WHISPER_MODEL_URL: "https://cdn.immanyat.example/models/ggml-base-quran-q5_0.bin"
+  });
+  assert.equal(overridden.status, 200);
+  const overrideJson = await overridden.json();
+  assert.equal(overrideJson.primaryUrl, "https://cdn.immanyat.example/models/ggml-base-quran-q5_0.bin");
 });
 
 test("GET /privacy and /delete-account serve Arabic & English HTML pages", async () => {
@@ -344,3 +367,20 @@ test("callGeminiWithFallback auto-discovers active model from /v1beta/models whe
   assert.ok(calledUrls.some((u) => u.includes("/v1beta/models?key=")));
   assert.ok(calledUrls.some((u) => u.includes("/models/gemini-4-hydrogen-preview:generateContent")));
 });
+
+test("GET /version.json returns APKPure app update metadata schema", async () => {
+  const req = new Request("https://api.immanyat.example/version.json", { method: "GET" });
+  const res = await handleRequest(req, {});
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(typeof json.versionCode, "number");
+  assert.ok(json.versionCode >= 2);
+  assert.equal(json.versionName, "1.5");
+  assert.equal(typeof json.forceUpdate, "boolean");
+  assert.ok(json.title.length > 0);
+  assert.ok(json.message.length > 0);
+  assert.equal(json.downloadUrl, "https://apkpure.com/p/com.immanyat.com");
+  assert.equal(typeof json.minSupportedVersion, "number");
+  assert.ok(json.releaseNotes.length > 0);
+});
+

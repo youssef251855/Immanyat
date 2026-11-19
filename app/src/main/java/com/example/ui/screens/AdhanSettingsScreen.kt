@@ -1879,7 +1879,7 @@ fun SmartSettingsTab(
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
                             Text("الوضع الصامت أثناء النوم", color = LightWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text("كتم الأذان الصوتي تلقائيًا بين (11م - 5ص).", color = TextColorSecondary, fontSize = 9.sp)
+                            Text("كتم التنبيهات الليلية (11م - 5ص) مع استثناء أذان وإقامة الفجر دائماً.", color = TextColorSecondary, fontSize = 9.sp)
                         }
                     }
                     Switch(
@@ -2071,10 +2071,64 @@ fun SmartSettingsTab(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                    var isBatteryExempt by remember {
+                        mutableStateOf(AdhanManager.isIgnoringBatteryOptimizations(context))
+                    }
+                    DisposableEffect(lifecycleOwner) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                isBatteryExempt = AdhanManager.isIgnoringBatteryOptimizations(context)
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycleOwner.lifecycle.removeObserver(observer)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isBatteryExempt) EmeraldSecondary.copy(alpha = 0.14f)
+                                else Color(0xFFFFB74D).copy(alpha = 0.12f)
+                            )
+                            .border(
+                                0.8.dp,
+                                if (isBatteryExempt) EmeraldSecondary.copy(alpha = 0.5f)
+                                else Color(0xFFFFB74D).copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = if (isBatteryExempt) {
+                                "حالة البطارية: مستثنى ويعمل في الخلفية بحرية"
+                            } else {
+                                "حالة البطارية: مقيد — يوصى بالاستثناء المباشر"
+                            },
+                            color = if (isBatteryExempt) EmeraldSecondary else Color(0xFFFFB74D),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = if (isBatteryExempt) Icons.Default.CheckCircle else Icons.Default.WarningAmber,
+                            contentDescription = null,
+                            tint = if (isBatteryExempt) EmeraldSecondary else Color(0xFFFFB74D),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     val steps = listOf(
-                        "1️⃣ اضغط على الزر أدناه للانتقال إلى قسم ضبط طاقة التطبيق.",
-                        "2️⃣ ابحث عن تطبيق (إيمانيات) من قائمة التطبيقات النشطة.",
-                        "3️⃣ اختر خيار (غير مقيد / Unrestricted) عِوضًا عن (محسّن / Optimized)."
+                        "1️⃣ اضغط على زر الاستثناء المباشر أدناه ثم اختر (السماح / Allow).",
+                        "2️⃣ أو افتح قائمة البطارية واختر لتطبيق (إيمانيات) خيار (غير مقيد / Unrestricted)."
                     )
 
                     steps.forEach { step ->
@@ -2087,9 +2141,59 @@ fun SmartSettingsTab(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    Button(
+                    if (!isBatteryExempt && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        Button(
+                            onClick = {
+                                viewModel.triggerHaptic()
+                                try {
+                                    val directIntent = Intent(
+                                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                                    ).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    context.startActivity(directIntent)
+                                } catch (e: Exception) {
+                                    try {
+                                        context.startActivity(
+                                            Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                        )
+                                    } catch (_: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "تعذر فتح نافذة الاستثناء المباشر على هذا الجهاز، جرّب فتح الإعدادات بالزر أدناه.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("direct_battery_exemption_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.BatteryChargingFull,
+                                contentDescription = "استثناء البطارية المباشر",
+                                tint = DarkBackground,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "استثناء التطبيق مباشرة من تحسين البطارية ⚡",
+                                color = DarkBackground,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    OutlinedButton(
                         onClick = {
                             viewModel.triggerHaptic()
                             try {
@@ -2115,11 +2219,12 @@ fun SmartSettingsTab(
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                        border = BorderStroke(1.dp, EmeraldSecondary.copy(alpha = 0.7f)),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
+                            .height(48.dp)
+                            .testTag("battery_settings_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.SettingsApplications,
@@ -2129,7 +2234,7 @@ fun SmartSettingsTab(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "اذهب لإعدادات بطارية تطبيقك الآن ⚙️",
+                            text = "فتح إعدادات بطارية التطبيق يدوياً ⚙️",
                             color = LightWhite,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -2193,21 +2298,34 @@ fun SmartSettingsTab(
                                 viewModel.triggerHaptic()
                                 isCheckingUpdatesState = true
                                 scope.launch {
-                                    val result = withContext(Dispatchers.IO) {
-                                        UpdateManager.fetchUpdateInfo(context)
-                                    }
+                                    val result = com.example.data.AppUpdateChecker.checkForUpdate(
+                                        context = context,
+                                        forceRefresh = true
+                                    )
                                     isCheckingUpdatesState = false
-                                    if (result != null) {
-                                        val currentCode = UpdateManager.getCurrentVersionCode(context)
-                                        if (result.latestVersionCode > currentCode) {
-                                            manualUpdateInfoState = result
-                                            manualUpdateForcedState = currentCode < result.minRequiredVersionCode || result.isForceUpdate
+                                    when (result) {
+                                        is com.example.data.AppUpdateCheckResult.UpdateAvailable -> {
+                                            val m = result.manifest
+                                            manualUpdateInfoState = UpdateInfo(
+                                                latestVersionCode = m.versionCode,
+                                                latestVersionName = m.versionName,
+                                                minRequiredVersionCode = m.minSupportedVersion,
+                                                isForceUpdate = m.forceUpdate,
+                                                title = m.title,
+                                                message = m.message,
+                                                changelogAr = m.releaseNotes.ifBlank { m.message },
+                                                changelogEn = "",
+                                                updateUrl = m.downloadUrl
+                                            )
+                                            manualUpdateForcedState = result.isForced
                                             showManualUpdateDialogState = true
-                                        } else {
+                                        }
+                                        is com.example.data.AppUpdateCheckResult.UpToDate -> {
                                             Toast.makeText(context, "إصدارك الحالي محدث ومستقر بالكامل! ✨", Toast.LENGTH_LONG).show()
                                         }
-                                    } else {
-                                        Toast.makeText(context, "تعذر التحقق من التحديثات حالياً. تأكد من اتصالك بالإنترنت.", Toast.LENGTH_LONG).show()
+                                        is com.example.data.AppUpdateCheckResult.UnavailableOrSkipped -> {
+                                            Toast.makeText(context, "تعذر التحقق من التحديثات حالياً. تأكد من اتصالك بالإنترنت.", Toast.LENGTH_LONG).show()
+                                        }
                                     }
                                 }
                             },

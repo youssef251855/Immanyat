@@ -1,6 +1,6 @@
 package com.example.api
 
-import com.example.BuildConfig
+import com.example.data.SecureApiConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,17 +19,10 @@ object GeminiApiClient {
         .writeTimeout(90, TimeUnit.SECONDS)
         .build()
 
-    private fun configuredBaseUrl(): String? {
-        val raw = BuildConfig.BACKEND_BASE_URL.trim().removeSuffix("/")
-        return if (raw.startsWith("https://", ignoreCase = true) && raw.length > "https://".length) {
-            raw
-        } else {
-            null
-        }
-    }
+    private fun configuredBaseUrl(): String? = SecureApiConfig.getHttpsBackendBaseUrl()
 
     val isConfigured: Boolean
-        get() = configuredBaseUrl() != null
+        get() = SecureApiConfig.isBackendConfigured()
 
     private fun buildPostRequest(url: String, payload: JSONObject): Request {
         val builder = Request.Builder()
@@ -37,9 +30,8 @@ object GeminiApiClient {
             .header("Accept", "application/json")
             .post(payload.toString().toRequestBody(jsonMediaType))
 
-        val clientToken = BuildConfig.BACKEND_CLIENT_TOKEN.trim()
-        if (clientToken.isNotEmpty() && !clientToken.startsWith("UNCONFIGURED_")) {
-            builder.header("X-App-Token", clientToken)
+        SecureApiConfig.getClientTokenIfAuthorized()?.let { token ->
+            builder.header("X-App-Token", token)
         }
         return builder.build()
     }

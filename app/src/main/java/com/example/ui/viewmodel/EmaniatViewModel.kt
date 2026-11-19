@@ -17,6 +17,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.api.GeminiApiClient
 import com.example.data.*
+import com.example.whisper.OfflineWhisperEngine
+import com.example.whisper.QuranModelManager
+import com.example.whisper.WhisperModelDownloadState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.text.SimpleDateFormat
@@ -150,6 +153,9 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
     val completedWorshipCount: StateFlow<Int> = repository.getCompletedWorshipCount(todayStr)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    // Offline Whisper Quran model background download state
+    val whisperModelDownloadState: StateFlow<WhisperModelDownloadState> = QuranModelManager.downloadState
+
     init {
         viewModelScope.launch {
             repository.initializeDefaultDataIfRequired()
@@ -161,10 +167,35 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         
+        // Check/download offline Quran Whisper model in background via WorkManager
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                QuranModelManager.ensureModelAvailable(getApplication())
+            }.onFailure { e ->
+                Log.w("EmaniatViewModel", "Skipping WorkManager init check: ${e.message}")
+            }
+        }
+
         // Let's load the AI advice based on time of day on launch
         fetchAiSpiritualAdvice()
         // Refresh downloaded Quran Surahs
         refreshDownloadedSurahs()
+    }
+
+    fun retryOfflineWhisperModelDownload() {
+        runCatching {
+            QuranModelManager.ensureModelAvailable(getApplication(), forceRetry = true)
+        }.onFailure { e ->
+            Log.w("EmaniatViewModel", "Retry offline model download failed: ${e.message}")
+        }
+        triggerHaptic()
+    }
+
+    fun cancelOfflineWhisperModelDownload() {
+        runCatching {
+            QuranModelManager.cancelDownload(getApplication())
+        }
+        triggerHaptic()
     }
 
     fun setLoginStatus(loggedIn: Boolean, name: String = "عبد الله", email: String = "", uid: String = "") {
@@ -830,6 +861,9 @@ class EmaniatViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
         stopRecitationOnly()
         progressJob?.cancel()
+        CoroutineScope(Dispatchers.IO).launch {
+            OfflineWhisperEngine.release()
+        }
     }
 
     // Favorite Duas toggles

@@ -51,10 +51,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Immediate schedule of the background Adhan Alarm in background thread
+        // Immediate schedule of the background Adhan Alarm and daily WorkManager watchdog
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 com.example.data.AdhanManager.scheduleNextAlarm(this@MainActivity)
+                com.example.service.AdhanAlarmWatchdogWorker.ensureScheduled(this@MainActivity)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -98,10 +99,6 @@ class MainActivity : ComponentActivity() {
                                 com.example.service.AdhanPlayerService.AlarmAudioMode.IDLE
 
                             if (serviceIdle) {
-                                val cal = java.util.Calendar.getInstance()
-                                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-                                val quietSleep = com.example.data.AdhanManager.isSilentDuringSleep(context) && (hour >= 23 || hour < 5)
-
                                 val matchingPrayer = prayers.firstOrNull { p ->
                                     p.name != "Sunrise" &&
                                         p.isEnabled &&
@@ -111,6 +108,12 @@ class MainActivity : ComponentActivity() {
                                 }
                                 if (matchingPrayer != null) {
                                     com.example.data.AdhanManager.markPrayerTriggeredToday(context, matchingPrayer.name)
+                                    val quietSleep = com.example.data.AdhanManager.isQuietSleepActive(
+                                        context,
+                                        "ADHAN",
+                                        matchingPrayer.name,
+                                        now
+                                    )
                                     if (!quietSleep) {
                                         com.example.service.AdhanPlayerService.startAthan(
                                             context,
@@ -132,6 +135,12 @@ class MainActivity : ComponentActivity() {
                                     } else null
                                     if (matchingIqamah != null) {
                                         com.example.data.AdhanManager.markIqamahTriggeredToday(context, matchingIqamah.name)
+                                        val quietSleep = com.example.data.AdhanManager.isQuietSleepActive(
+                                            context,
+                                            "IQAMAH",
+                                            matchingIqamah.name,
+                                            now
+                                        )
                                         if (!quietSleep) {
                                             com.example.service.AdhanPlayerService.startIqamah(
                                                 context,
