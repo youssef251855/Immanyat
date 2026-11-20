@@ -227,6 +227,8 @@ fun LoginScreen(
 
                 // Error Message if any
                 if (errorMessage != null) {
+                    val appSha1 = remember(context) { AuthHelper.getAppSigningSha1(context) }
+                    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -234,14 +236,15 @@ fun LoginScreen(
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color(0xFFFF6B6B).copy(alpha = 0.12f))
                             .border(0.8.dp, Color(0xFFFF6B6B).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                            .padding(10.dp),
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
                             text = errorMessage ?: "",
                             color = Color(0xFFFF8A8A),
                             fontSize = 12.sp,
+                            lineHeight = 18.sp,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -254,9 +257,10 @@ fun LoginScreen(
                                 enabled = !isGoogleLoading,
                                 border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.7f)),
                                 shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(44.dp)
+                                    .heightIn(min = 48.dp)
                                     .testTag("google_web_fallback_button")
                             ) {
                                 Icon(
@@ -265,13 +269,50 @@ fun LoginScreen(
                                     tint = GoldAccent,
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "المتابعة بحساب Google عبر المتصفح 🌐",
+                                    text = "المتابعة بحساب Google عبر المتصفح",
                                     color = GoldAccent,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center
                                 )
+                            }
+                            if (!appSha1.isNullOrBlank()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(DarkBackground.copy(alpha = 0.45f))
+                                        .clickable {
+                                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(appSha1))
+                                            Toast.makeText(context, "تم نسخ بصمة SHA-1 لإضافتها في Firebase", Toast.LENGTH_SHORT).show()
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "بصمة شهادة التطبيق (SHA-1) لربطها في Firebase:",
+                                            color = TextColorSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                        Text(
+                                            text = appSha1,
+                                            color = GoldAccent.copy(alpha = 0.9f),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "نسخ بصمة SHA-1",
+                                        tint = GoldAccent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
                     }

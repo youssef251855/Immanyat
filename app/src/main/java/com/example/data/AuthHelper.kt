@@ -3,7 +3,6 @@ package com.example.data
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.MutableContextWrapper
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -25,6 +24,7 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.OAuthProvider
@@ -44,6 +44,7 @@ sealed class AuthResult {
 
 object AuthHelper {
     private const val TAG = "AuthHelper"
+    private const val FAST_CANCEL_THRESHOLD_MS = 900L
 
     private tailrec fun Context.findActivity(): Activity? = when (this) {
         is Activity -> this
@@ -135,7 +136,12 @@ object AuthHelper {
             m.contains("reauth") ||
             m.contains("10:") ||
             m.contains("16:") ||
-            m.contains("configuration")
+            m.contains("configuration") ||
+            m.contains("whitelisted") ||
+            m.contains("cannot find a matching") ||
+            m.contains("not found") ||
+            m.contains("mismatch") ||
+            m.contains("cert")
     }
 
     suspend fun signInWithGoogle(context: Context): AuthResult {
@@ -148,22 +154,26 @@ object AuthHelper {
             return AuthResult.Error("معرّف عميل Google الويب غير مهيأ.")
         }
 
+        // Pass the actual Activity context directly so Credential Manager can anchor the bottom sheet reliably.
         val activity = context.findActivity()
-        val promptContext: Context = activity?.let { MutableContextWrapper(it) } ?: context
+        val promptContext: Context = activity ?: context
 
         // 1) Primary Credential Manager flow: GetSignInWithGoogleOption
         val primaryOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+        val primaryStartMs = System.currentTimeMillis()
         try {
             return signInWithCredentialOption(promptContext, primaryOption)
         } catch (e: CancellationException) {
             throw e
         } catch (e: GetCredentialCancellationException) {
+            val elapsedMs = System.currentTimeMillis() - primaryStartMs
             val msg = e.errorMessage?.toString() ?: e.message
-            Log.w(TAG, "Primary Google Sign-In cancelled: $msg (SHA1=${getAppSigningSha1(context)})", e)
-            if (!isProviderOrConfigError(msg)) {
+            Log.w("Auth", "Google Sign-In cancelled or dismissed after ${elapsedMs}ms: $msg (SHA1=${getAppSigningSha1(context)})", e)
+            // Play Services rejects unregistered SHA-1 certificates almost instantaneously (< 900ms)
+            // with GetCredentialCancellationException; fall through to secondary/web flow in that case.
+            if (!isProviderOrConfigError(msg) && elapsedMs >= FAST_CANCEL_THRESHOLD_MS) {
                 return AuthResult.Cancelled
             }
-            // Otherwise fall through to fallback options below
         } catch (e: NoCredentialException) {
             Log.w(TAG, "NoCredentialException on primary flow; trying GetGoogleIdOption fallback", e)
         } catch (e: GetCredentialProviderConfigurationException) {
@@ -179,7 +189,9 @@ object AuthHelper {
             return AuthResult.Error("تمت مقاطعة عملية تسجيل الدخول، يرجى المحاولة مرة أخرى.")
         } catch (e: Exception) {
             Log.e(TAG, "Google Sign-In failed on primary flow: ${e.message}", e)
-            return AuthResult.Error(e.localizedMessage ?: "تعذر تسجيل الدخول بواسطة Google.")
+            if (!isProviderOrConfigError(e.message)) {
+                return AuthResult.Error(e.localizedMessage ?: "تعذر تسجيل الدخول بواسطة Google.")
+            }
         }
 
         // 2) Secondary Credential Manager flow: GetGoogleIdOption (unfiltered)
@@ -188,30 +200,34 @@ object AuthHelper {
             .setServerClientId(clientId)
             .setAutoSelectEnabled(false)
             .build()
+        val secondaryStartMs = System.currentTimeMillis()
         try {
             return signInWithCredentialOption(promptContext, fallbackOption)
         } catch (e: CancellationException) {
             throw e
         } catch (e: GetCredentialCancellationException) {
+            val elapsedMs = System.currentTimeMillis() - secondaryStartMs
             val msg = e.errorMessage?.toString() ?: e.message
-            Log.w(TAG, "Fallback GoogleIdOption cancelled: $msg", e)
-            if (!isProviderOrConfigError(msg)) {
+            Log.w("Auth", "Fallback GoogleIdOption cancelled after ${elapsedMs}ms: $msg", e)
+            if (!isProviderOrConfigError(msg) && elapsedMs >= FAST_CANCEL_THRESHOLD_MS) {
                 return AuthResult.Cancelled
             }
         } catch (e: GetCredentialException) {
             Log.w(TAG, "CredentialManager fallback failed (${e.javaClass.simpleName}): ${e.message}; falling back to Web OAuth", e)
         } catch (e: Exception) {
             Log.e(TAG, "Fallback Google Sign-In failed: ${e.message}", e)
-            return AuthResult.Error(e.localizedMessage ?: "تعذر تسجيل الدخول بواسطة Google.")
+            if (!isProviderOrConfigError(e.message)) {
+                return AuthResult.Error(e.localizedMessage ?: "تعذر تسجيل الدخول بواسطة Google.")
+            }
         }
 
-        // 3) Seamless Firebase Federated Google OAuth fallback (does not fail on device Credential Manager / missing SHA-1)
+        // 3) Seamless Firebase Federated Google OAuth fallback (works even before SHA-1 is added in Firebase Console)
         return signInWithGoogleWebFallback(context)
     }
 
     /**
      * Opens Google Sign-In via Firebase Federated OAuth (Custom Tabs).
-     * Works reliably even when Credential Manager / Play Services rejects an unsigned/new CI SHA-1
+     * Works reliably even when Credential Manager / Play Services rejects an unregistered SHA-1
      * or when the device has no Credential Provider configured.
      */
     suspend fun signInWithGoogleWebFallback(context: Context): AuthResult {
@@ -235,6 +251,17 @@ object AuthHelper {
             AuthResult.Success(user, name, email)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseAuthException) {
+            Log.e(TAG, "Web OAuth FirebaseAuthException (${e.errorCode}): ${e.message}", e)
+            val friendly = when (e.errorCode) {
+                "ERROR_OPERATION_NOT_ALLOWED" ->
+                    "يرجى تفعيل تسجيل الدخول بحساب Google داخل لوحة تحكم Firebase (Authentication ← Sign-in method ← Google)."
+                "ERROR_WEB_CONTEXT_CANCELED" -> null
+                "ERROR_NETWORK_REQUEST_FAILED" ->
+                    "تعذر الاتصال بخادم المصادقة، تأكد من اتصالك بالإنترنت ثم أعد المحاولة."
+                else -> e.localizedMessage ?: "تعذر إتمام تسجيل الدخول عبر المتصفح (${e.errorCode})."
+            }
+            if (friendly == null) AuthResult.Cancelled else AuthResult.Error(friendly)
         } catch (e: Exception) {
             Log.e(TAG, "Web OAuth Google Sign-In failed: ${e.message}", e)
             val msg = e.localizedMessage ?: e.message ?: "فشل تسجيل الدخول بواسطة Google."
