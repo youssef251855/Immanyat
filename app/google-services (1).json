@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "495226832744",
+    "firebase_url": "https://quran-febbe-default-rtdb.firebaseio.com",
+    "project_id": "quran-febbe",
+    "storage_bucket": "quran-febbe.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:495226832744:android:d022541e9a3ae9c0b838dd",
+        "android_client_info": {
+          "package_name": "com.immanyat.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "495226832744-htrlt2br69topa2lfrqo1do95su4usjv.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.immanyat.com",
+            "certificate_hash": "f07ac40291d46f959b21c19fc1d20e7e4290fe1d"
+          }
+        },
+        {
+          "client_id": "495226832744-8fe31pt5i8meobmingbl1c2vhc1jp0dv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDy5z4xxrxpLzAo6Iy6-AmkNDwHfXLdIPE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "495226832744-8fe31pt5i8meobmingbl1c2vhc1jp0dv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
